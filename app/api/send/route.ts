@@ -11,7 +11,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Definisikan interface untuk Task, termasuk kolom baru
+// Definisikan interface untuk Task
 interface Task {
   id: string;
   title: string;
@@ -20,9 +20,9 @@ interface Task {
   status: string;
   remind_method: string;
   target_contact: string | null;
-  reminder_days: number; // Untuk testing, ini kita anggap sebagai "menit"
+  reminder_days: number;
   user_id: string;
-  reminder_sent_at: string | null; // <-- Kolom baru untuk melacak pengiriman
+  reminder_sent_at: string | null;
   users: Array<{
     email: string;
     role: string;
@@ -31,15 +31,8 @@ interface Task {
 
 /**
  * GET Handler untuk Cron Job (Automatic Reminders)
- *
- * Fungsi ini akan:
- * 1. Mengambil semua tugas 'pending' yang belum pernah dikirimi reminder (reminder_sent_at is null).
- * 2. Mengecek apakah waktu sekarang sudah masuk dalam jendela pengingat (misal, 1 menit sebelum deadline).
- * 3. Jika ya, kirim email.
- * 4. Setelah email terkirim, update kolom 'reminder_sent_at' agar tidak dikirim lagi.
  */
 export async function GET() {
-//   console.log("\n--- STARTING REMINDER CHECK (GET request) ---");
   try {
     const now = new Date();
     console.log(`DEBUG: Current server time (UTC): ${now.toISOString()}`);
@@ -58,7 +51,7 @@ export async function GET() {
       .eq("status", "pending")
       .eq("remind_method", "email")
       .not("deadline", "is", null)
-      .is("reminder_sent_at", null); // <-- FILTER UTAMA: Hanya ambil yang belum dikirim!
+      .is("reminder_sent_at", null);
 
     if (queryError) {
       console.error(
@@ -94,29 +87,21 @@ export async function GET() {
           console.error(
             `❌ ERROR: Invalid deadline date for task ${task.id}: '${task.deadline}'. Skipping.`
           );
-          results.push({
-            taskId: task.id,
-            title: task.title,
-            status: "error",
-            error: "Invalid deadline date",
-          });
           continue;
         }
 
         const timeDiff = deadline.getTime() - now.getTime();
 
-        // Untuk testing, kita anggap 'reminder_days' adalah menit.
-        // Untuk production, ganti menjadi: task.reminder_days * 24 * 60 * 60 * 1000;
-        const reminderThresholdInMs = task.reminder_days * 60 * 1000;
+        // Mengubah logika dari menit ke HARI
+        const reminderThresholdInMs = task.reminder_days * 24 * 60 * 60 * 1000;
 
-        // 2. Cek apakah sudah masuk jendela waktu pengiriman
         const shouldSendReminder =
           timeDiff <= reminderThresholdInMs && timeDiff > 0;
 
         console.log(
-          `   DEBUG: Time until deadline: ${Math.round(timeDiff / 60000)} mins`
+          `   DEBUG: Time until deadline: ${(timeDiff / (1000 * 60 * 60 * 24)).toFixed(2)} days`
         );
-        console.log(`   DEBUG: Reminder threshold: ${task.reminder_days} mins`);
+        console.log(`   DEBUG: Reminder threshold: ${task.reminder_days} days`);
         console.log(`   DEBUG: Should Send Reminder?: ${shouldSendReminder}`);
 
         if (shouldSendReminder) {
@@ -126,12 +111,6 @@ export async function GET() {
             console.warn(
               `⚠️ WARNING: No valid recipient email found for task ${task.id}. Skipping.`
             );
-            results.push({
-              taskId: task.id,
-              title: task.title,
-              status: "skipped",
-              reason: "no_recipient_email",
-            });
             continue;
           }
 
@@ -168,7 +147,6 @@ export async function GET() {
             );
             remindersSentCount++;
 
-            // 3. UPDATE DATABASE untuk menandai reminder sudah terkirim
             console.log(
               `   DEBUG: Updating 'reminder_sent_at' for task ${task.id}...`
             );
@@ -187,7 +165,6 @@ export async function GET() {
                 `   ✅ INFO: Marked task ${task.id} as reminder-sent.`
               );
             }
-
             results.push({
               taskId: task.id,
               title: task.title,
@@ -251,9 +228,6 @@ export async function GET() {
 
 /**
  * POST Handler untuk Manual Reminders
- *
- * Fungsi ini dipanggil oleh user secara manual (misal, klik tombol "Kirim Reminder Sekarang").
- * Tidak perlu mengecek waktu atau status 'reminder_sent_at'.
  */
 export async function POST(request: Request) {
   try {
