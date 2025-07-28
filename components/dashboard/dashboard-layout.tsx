@@ -59,12 +59,6 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
                 TaskManager
               </Link>
               <div className="ml-10 flex space-x-8">
-                <Link
-                  href="/dashboard"
-                  className="text-gray-900 hover:text-gray-700 px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  Dashboard
-                </Link>
                 {user?.role === "admin" && (
                   <Link
                     href="/admin"
