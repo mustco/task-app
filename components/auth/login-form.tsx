@@ -40,7 +40,6 @@ export function LoginForm() {
           description: "Logged in successfully!",
         })
         router.push("/dashboard")
-        router.refresh()
       }
     } catch (error) {
       toast({
