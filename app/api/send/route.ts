@@ -39,7 +39,7 @@ interface Task {
  * 4. Setelah email terkirim, update kolom 'reminder_sent_at' agar tidak dikirim lagi.
  */
 export async function GET() {
-  console.log("\n--- STARTING REMINDER CHECK (GET request) ---");
+//   console.log("\n--- STARTING REMINDER CHECK (GET request) ---");
   try {
     const now = new Date();
     console.log(`DEBUG: Current server time (UTC): ${now.toISOString()}`);
