@@ -342,7 +342,18 @@ export function TaskTable({ initialTasks }: TaskTableProps) {
                     type="datetime-local"
                     value={
                       task.deadline
-                        ? new Date(task.deadline).toISOString().slice(0, 16)
+                        ? new Date(task.deadline)
+                            .toLocaleString("sv-SE", {
+                              // <-- PERBAIKAN DI SINI
+                              year: "numeric",
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: false, // Penting untuk format 24 jam
+                              timeZoneName: undefined, // Pastikan tidak ada zona waktu yang ditambahkan ke string
+                            })
+                            .replace(" ", "T") // Ganti spasi menjadi 'T'
                         : ""
                     }
                     onChange={(e) =>
