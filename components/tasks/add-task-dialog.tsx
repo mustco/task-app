@@ -47,78 +47,89 @@ export function AddTaskDialog({
   const { toast } = useToast();
   const supabase = createClient();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+ const handleSubmit = async (e: React.FormEvent) => {
+   e.preventDefault();
+   setLoading(true);
 
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
+   try {
+     const {
+       data: { user },
+     } = await supabase.auth.getUser();
+     if (!user) throw new Error("Not authenticated");
 
-      // --- VALIDASI FRONTEND LEBIH KETAT ---
-      if (!title.trim()) {
-        throw new Error("Title is required.");
-      }
-      if (!deadline) {
-        throw new Error("Deadline is required.");
-      }
-      if (!remindMethod) {
-        throw new Error("Reminder Method is required.");
-      }
-      if (!targetContact.trim()) {
-        throw new Error("Target Contact is required.");
-      }
-      // Opsional: Validasi deadline di masa depan
-      if (new Date(deadline) <= new Date()) {
-        throw new Error("Deadline must be in the future.");
-      }
-      // ------------------------------------
+     // --- VALIDASI FRONTEND LEBIH KETAT ---
+     if (!title.trim()) {
+       throw new Error("Title is required.");
+     }
+     if (!deadline) {
+       throw new Error("Deadline is required.");
+     }
+     if (!remindMethod) {
+       throw new Error("Reminder Method is required.");
+     }
+     if (!targetContact.trim()) {
+       throw new Error("Target Contact is required.");
+     }
+     // Opsional: Validasi deadline di masa depan
+     if (new Date(deadline) <= new Date()) {
+       throw new Error("Deadline must be in the future.");
+     }
+     // ------------------------------------
 
-      const { data, error } = await supabase
-        .from("tasks")
-        .insert({
-          user_id: user.id,
-          title: title.trim(),
-          description: description.trim() || null,
-          deadline: new Date(deadline).toISOString(), // Pastikan format ISO
-          remind_method: remindMethod, // Gunakan state yang sudah divalidasi
-          target_contact: targetContact.trim(), // Gunakan state yang sudah divalidasi
-          reminder_days: reminderDays, // Nama kolom diubah sesuai DB
-          status: "pending",
-        })
-        .select()
-        .single();
+     const { data, error } = await supabase
+       .from("tasks")
+       .insert({
+         user_id: user.id,
+         title: title.trim(),
+         description: description.trim() || null,
+         deadline: new Date(deadline).toISOString(),
+         remind_method: remindMethod,
+         target_contact: targetContact.trim(),
+         reminder_days: reminderDays,
+         status: "pending",
+       })
+       .select()
+       .single();
 
-      if (error) throw error;
+     if (error) throw error;
 
-      onTaskAdded(data);
+     // Schedule reminder menggunakan Trigger.dev
+     const scheduleResponse = await fetch("/api/schedule-reminder", {
+       method: "POST",
+       headers: { "Content-Type": "application/json" },
+       body: JSON.stringify({ taskId: data.id }),
+     });
 
-      // Reset form
-      setTitle("");
-      setDescription("");
-      setDeadline("");
-      setRemindMethod("email"); // Reset ke default
-      setTargetContact("");
-      setReminderDays(1); // Nama state diubah
-      onOpenChange(false); // Tutup dialog setelah sukses
+     if (!scheduleResponse.ok) {
+       console.warn("Failed to schedule reminder, but task was created");
+     }
 
-      toast({
-        title: "Success",
-        description: "Task created successfully",
-      });
-    } catch (error: any) {
-      console.error("Failed to create task:", error); // Log error lebih detail
-      toast({
-        title: "Error",
-        description: error.message || "Failed to create task", // Tampilkan pesan error spesifik
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+     onTaskAdded(data);
+
+     // Reset form
+     setTitle("");
+     setDescription("");
+     setDeadline("");
+     setRemindMethod("email");
+     setTargetContact("");
+     setReminderDays(1);
+     onOpenChange(false);
+
+     toast({
+       title: "Success",
+       description: "Task created successfully",
+     });
+   } catch (error: any) {
+     console.error("Failed to create task:", error);
+     toast({
+       title: "Error",
+       description: error.message || "Failed to create task",
+       variant: "destructive",
+     });
+   } finally {
+     setLoading(false);
+   }
+ };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
