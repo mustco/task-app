@@ -6,10 +6,12 @@ import { Toaster } from "@/components/ui/toaster"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
-  title: "Task Management System",
+  title: "ListKu",
   description: "Manage your tasks with automated reminders",
-    generator: 'v0.dev'
-}
+  icons: {
+    icon: "/icon-listku.png", // Pastikan path ini benar
+  },
+};
 
 export default function RootLayout({
   children,

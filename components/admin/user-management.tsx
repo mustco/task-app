@@ -1,12 +1,20 @@
-"use client"
+// components/admin/user-management.tsx
+"use client";
 
-import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
-import type { User } from "@/lib/types"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { useToast } from "@/hooks/use-toast"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { User } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,57 +25,65 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+} from "@/components/ui/alert-dialog";
 
 interface UserManagementProps {
-  users: User[]
+  users: User[];
 }
 
 export function UserManagement({ users: initialUsers }: UserManagementProps) {
-  const [users, setUsers] = useState<User[]>(initialUsers)
-  const [loading, setLoading] = useState<string | null>(null)
-  const { toast } = useToast()
-  const supabase = createClient()
+  const [users, setUsers] = useState<User[]>(initialUsers);
+  const [loading, setLoading] = useState<string | null>(null);
+  const { toast } = useToast();
+  const supabase = createClient();
 
-  const updateUserStatus = async (userId: string, status: "active" | "suspended") => {
-    setLoading(userId)
+  const updateUserStatus = async (
+    userId: string,
+    status: "active" | "suspended"
+  ) => {
+    setLoading(userId);
     try {
-      const { error } = await supabase.from("users").update({ status }).eq("id", userId)
+      const { error } = await supabase
+        .from("users")
+        .update({ status })
+        .eq("id", userId);
 
-      if (error) throw error
+      if (error) throw error;
 
-      setUsers((prev) => prev.map((user) => (user.id === userId ? { ...user, status } : user)))
+      setUsers((prev) =>
+        prev.map((user) => (user.id === userId ? { ...user, status } : user))
+      );
 
       toast({
         title: "Success",
         description: `User ${status === "suspended" ? "suspended" : "activated"} successfully`,
-      })
+      });
     } catch (error) {
       toast({
         title: "Error",
         description: "Failed to update user status",
         variant: "destructive",
-      })
+      });
     } finally {
-      setLoading(null)
+      setLoading(null);
     }
-  }
+  };
 
   const getStatusBadge = (status: string) => {
     return status === "active" ? (
       <Badge className="bg-green-100 text-green-800">Active</Badge>
     ) : (
       <Badge className="bg-red-100 text-red-800">Suspended</Badge>
-    )
-  }
+    );
+  };
 
   const getRoleBadge = (role: string) => {
     return role === "admin" ? (
       <Badge className="bg-purple-100 text-purple-800">Admin</Badge>
     ) : (
       <Badge className="bg-blue-100 text-blue-800">User</Badge>
-    )
-  }
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -78,6 +94,7 @@ export function UserManagement({ users: initialUsers }: UserManagementProps) {
           <TableHeader>
             <TableRow>
               <TableHead>Email</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead>Role</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Created</TableHead>
@@ -88,35 +105,62 @@ export function UserManagement({ users: initialUsers }: UserManagementProps) {
             {users.map((user) => (
               <TableRow key={user.id}>
                 <TableCell className="font-medium">{user.email}</TableCell>
+                <TableCell>{user.name || "-"}</TableCell>
                 <TableCell>{getRoleBadge(user.role)}</TableCell>
                 <TableCell>{getStatusBadge(user.status)}</TableCell>
-                <TableCell>{new Date(user.created_at).toLocaleDateString()}</TableCell>
+                {/* PERBAIKAN HYDRATION WARNING DI SINI */}
+                <TableCell>
+                  {new Date(user.created_at).toLocaleDateString("en-US", {
+                    // <-- Tambahkan 'en-US' atau 'id-ID' atau format yang konsisten
+                    year: "numeric",
+                    month: "numeric",
+                    day: "numeric",
+                  })}
+                </TableCell>
                 <TableCell>
                   {user.role !== "admin" && (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button
-                          variant={user.status === "active" ? "destructive" : "default"}
+                          variant={
+                            user.status === "active" ? "destructive" : "default"
+                          }
                           size="sm"
                           disabled={loading === user.id}
                         >
-                          {loading === user.id ? "Processing..." : user.status === "active" ? "Suspend" : "Activate"}
+                          {loading === user.id
+                            ? "Processing..."
+                            : user.status === "active"
+                              ? "Suspend"
+                              : "Activate"}
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>
-                            {user.status === "active" ? "Suspend User" : "Activate User"}
+                            {user.status === "active"
+                              ? "Suspend User"
+                              : "Activate User"}
                           </AlertDialogTitle>
                           <AlertDialogDescription>
-                            Are you sure you want to {user.status === "active" ? "suspend" : "activate"} {user.email}?
-                            {user.status === "active" && " This will prevent them from accessing the application."}
+                            Are you sure you want to{" "}
+                            {user.status === "active" ? "suspend" : "activate"}{" "}
+                            {user.email}?
+                            {user.status === "active" &&
+                              " This will prevent them from accessing the application."}
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancel</AlertDialogCancel>
                           <AlertDialogAction
-                            onClick={() => updateUserStatus(user.id, user.status === "active" ? "suspended" : "active")}
+                            onClick={() =>
+                              updateUserStatus(
+                                user.id,
+                                user.status === "active"
+                                  ? "suspended"
+                                  : "active"
+                              )
+                            }
                           >
                             {user.status === "active" ? "Suspend" : "Activate"}
                           </AlertDialogAction>
@@ -131,5 +175,5 @@ export function UserManagement({ users: initialUsers }: UserManagementProps) {
         </Table>
       </div>
     </div>
-  )
+  );
 }

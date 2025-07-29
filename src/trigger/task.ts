@@ -26,7 +26,7 @@ export const sendTaskReminder = task({
     try {
       // Kirim email reminder
       const { data: emailData, error: emailError } = await resend.emails.send({
-        from: "Task Manager <onboarding@resend.dev>",
+        from: "ListKu <reminders-noreply@listku.my.id>",
         to: [payload.recipientEmail],
         subject: `⏰ Reminder: ${payload.title}`,
         react: ReminderTemplate({
