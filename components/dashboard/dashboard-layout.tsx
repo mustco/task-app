@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import Image from "next/image";
 import type { User } from "@/lib/types";
 import {
   DropdownMenu,
@@ -56,7 +57,14 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
                 href="/dashboard"
                 className="text-xl font-bold text-gray-900"
               >
-                TaskManager
+                <Image
+                  src="/listkuu.png"
+                  alt="ListKu Logo"
+                  width={100} // Coba nilai yang lebih besar, misal 100
+                  height={100} // Sesuaikan agar menjaga rasio aspek
+                  // Hapus className="h-8 w-auto" dari sini
+                  className="pointer-events-none"
+                />
               </Link>
               <div className="ml-10 flex space-x-8">
                 {user?.role === "admin" && (

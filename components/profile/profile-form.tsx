@@ -147,7 +147,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
               />
             </div>
             <Button type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Update Email"}
+              {loading ? "Updating..." : "Update Profile"}
             </Button>
           </form>
         </CardContent>
