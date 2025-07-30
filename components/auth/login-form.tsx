@@ -58,6 +58,11 @@ export function LoginForm() {
         <div>
           <Label htmlFor="email">Email address</Label>
           <Input
+            className="!border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400 mt-1"
             id="email"
             name="email"
             type="email"
@@ -65,7 +70,6 @@ export function LoginForm() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1"
           />
         </div>
         <div>
@@ -78,7 +82,11 @@ export function LoginForm() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1"
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
           />
         </div>
       </div>
@@ -87,5 +95,5 @@ export function LoginForm() {
         {loading ? "Signing in..." : "Sign in"}
       </Button>
     </form>
-  )
+  );
 }

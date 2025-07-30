@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Task } from "@/lib/types";
+import type { Task, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -14,132 +14,71 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, Search } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Search,
+  Mail,
+  MessageSquare,
+  Pencil,
+} from "lucide-react";
 import { AddTaskDialog } from "./add-task-dialog";
+import { EditTaskDialog } from "./edit-task-dialog";
 
 interface TaskTableProps {
   initialTasks: Task[];
+  userProfile: User | null;
 }
 
-interface ColumnWidths {
-  title: number;
-  description: number;
-  deadline: number;
-  status: number;
-  reminder: number;
-  contact: number;
-  actions: number;
-}
-
-export function TaskTable({ initialTasks }: TaskTableProps) {
+export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [editingValues, setEditingValues] = useState<
-    Record<string, Partial<Task>>
-  >({});
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  // Column widths state
-  const [columnWidths, setColumnWidths] = useState<ColumnWidths>({
+  const columnMinWidths = {
     title: 150,
     description: 200,
-    deadline: 180,
-    status: 120,
+    deadline: 150,
+    status: 110,
     reminder: 100,
-    contact: 150,
+    remindDays: 130,
+    contact: 180,
     actions: 80,
-  });
+  };
 
-  const [isResizing, setIsResizing] = useState<string | null>(null);
   const tableRef = useRef<HTMLTableElement>(null);
-
   const { toast } = useToast();
   const supabase = createClient();
 
   const filteredTasks = tasks.filter((task) => {
+    const searchLower = searchTerm.toLowerCase();
     const matchesSearch =
-      task.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      task.description?.toLowerCase().includes(searchTerm.toLowerCase());
+      task.title.toLowerCase().includes(searchLower) ||
+      task.description?.toLowerCase().includes(searchLower) ||
+      task.target_contact?.toLowerCase().includes(searchLower);
     const matchesStatus =
       statusFilter === "all" || task.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  // Resizing functions
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent, column: keyof ColumnWidths) => {
-      e.preventDefault();
-      setIsResizing(column);
-
-      const startX = e.clientX;
-      const startWidth = columnWidths[column];
-
-      const handleMouseMove = (e: MouseEvent) => {
-        const newWidth = Math.max(80, startWidth + (e.clientX - startX));
-        setColumnWidths((prev) => ({ ...prev, [column]: newWidth }));
-      };
-
-      const handleMouseUp = () => {
-        setIsResizing(null);
-        document.removeEventListener("mousemove", handleMouseMove);
-        document.removeEventListener("mouseup", handleMouseUp);
-      };
-
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-    },
-    [columnWidths]
-  );
-
-  const updateTask = async (taskId: string, updates: Partial<Task>) => {
-    try {
-      const { error } = await supabase
-        .from("tasks")
-        .update(updates)
-        .eq("id", taskId);
-      if (error) throw error;
-
-      setTasks((prev) =>
-        prev.map((task) =>
-          task.id === taskId ? { ...task, ...updates } : task
-        )
-      );
-
-      setEditingValues((prev) => {
-        const newState = { ...prev };
-        delete newState[taskId];
-        return newState;
-      });
-
-      toast({
-        title: "Success",
-        description: "Task updated successfully",
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to update task",
-        variant: "destructive",
-      });
-    }
-  };
-
   const deleteTask = async (taskId: string) => {
+    if (!confirm("Are you sure you want to delete this note?")) {
+      return;
+    }
     try {
       const { error } = await supabase.from("tasks").delete().eq("id", taskId);
       if (error) throw error;
-
       setTasks((prev) => prev.filter((task) => task.id !== taskId));
-
       toast({
         title: "Success",
-        description: "Task deleted successfully",
+        description: "Note deleted successfully",
       });
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Error",
-        description: "Failed to delete task",
+        description: error.message || "Failed to delete note",
         variant: "destructive",
       });
     }
@@ -147,70 +86,56 @@ export function TaskTable({ initialTasks }: TaskTableProps) {
 
   const handleTaskAdded = (newTask: Task) => {
     setTasks((prev) => [newTask, ...prev]);
-    setShowAddDialog(false);
   };
 
-  const getCurrentValue = (taskId: string, field: keyof Task) => {
-    return (
-      editingValues[taskId]?.[field] ??
-      tasks.find((t) => t.id === taskId)?.[field]
+  const handleTaskUpdated = (updatedTask: Task) => {
+    setTasks((prevTasks) =>
+      prevTasks.map((task) => (task.id === updatedTask.id ? updatedTask : task))
     );
   };
 
-  const updateEditingValue = (
-    taskId: string,
-    field: keyof Task,
-    value: any
-  ) => {
-    setEditingValues((prev) => ({
-      ...prev,
-      [taskId]: {
-        ...prev[taskId],
-        [field]: value,
-      },
-    }));
-  };
-
-  const handleFieldBlur = (
-    taskId: string,
-    field: keyof Task,
-    newValue: any
-  ) => {
-    const task = tasks.find((t) => t.id === taskId);
-    if (task && task[field] !== newValue) {
-      updateTask(taskId, { [field]: newValue });
-    }
-  };
-
   const getStatusBadge = (status: string) => {
-    const colors = {
-      pending: "bg-yellow-100 text-yellow-800",
-      overdue: "bg-blue-100 text-blue-800",
-      completed: "bg-green-100 text-green-800",
+    const colors: Record<string, string> = {
+      pending: "bg-yellow-100 hover:bg-yellow-200 text-yellow-800",
+      overdue: "bg-red-100 hover:bg-red-200 text-red-800",
+      completed: "bg-green-100 hover:bg-green-200 text-green-800",
     };
-
+    const statusText = status.charAt(0).toUpperCase() + status.slice(1);
     return (
-      <Badge className={colors[status as keyof typeof colors]}>
-        {status.replace("_", " ")}
+      <Badge className={colors[status] || "bg-gray-100 text-gray-800"}>
+        {statusText}
       </Badge>
     );
   };
 
+  const formatDeadline = (dateString: string) => {
+    if (!dateString) return "-";
+    return new Date(dateString)
+      .toLocaleString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+      .replace(/\./g, ":");
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-4 items-end justify-between">
-        <div className="flex gap-2 flex-1">
+      <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
+        <div className="flex gap-2 w-full sm:w-auto">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
             <Input
-              placeholder="Search tasks..."
+              className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400 pl-10"
+              placeholder="Search notes..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-40 !border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400">
               <SelectValue placeholder="Filter by status" />
             </SelectTrigger>
             <SelectContent>
@@ -221,266 +146,196 @@ export function TaskTable({ initialTasks }: TaskTableProps) {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => setShowAddDialog(true)}>
+        <Button
+          onClick={() => setShowAddDialog(true)}
+          className="w-full sm:w-auto"
+        >
           <Plus className="w-4 h-4 mr-2" />
-          Add Task
+          Add Note
         </Button>
       </div>
 
-      {/* Resizable Table - All Devices */}
-      <div className="bg-white rounded-lg shadow overflow-x-auto">
-        <table ref={tableRef} className="w-full border-collapse">
-          <thead>
-            <tr className="border-b bg-gray-50">
+      <div className="bg-white rounded-lg shadow border overflow-x-auto">
+        <table ref={tableRef} className="w-full text-sm">
+          <thead className="bg-slate-100">
+            <tr className="border-b">
+              {/* === PERUBAHAN 1: Menambahkan 'border-r' pada <th> === */}
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.title }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.title}px` }}
               >
                 Title
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "title")}
-                />
               </th>
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.description }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.description}px` }}
               >
                 Description
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "description")}
-                />
               </th>
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.deadline }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.deadline}px` }}
               >
                 Deadline
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "deadline")}
-                />
               </th>
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.status }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.status}px` }}
               >
                 Status
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "status")}
-                />
               </th>
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.reminder }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.reminder}px` }}
               >
                 Reminder
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "reminder")}
-                />
               </th>
               <th
-                className="text-left p-3 font-medium text-gray-900 relative border-r border-gray-200"
-                style={{ width: columnWidths.contact }}
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.remindDays}px` }}
+              >
+                Remind Before
+              </th>
+              <th
+                className="text-left p-3 font-semibold text-gray-600 border-r"
+                style={{ minWidth: `${columnMinWidths.contact}px` }}
               >
                 Contact
-                <div
-                  className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-blue-300 active:bg-blue-400"
-                  onMouseDown={(e) => handleMouseDown(e, "contact")}
-                />
               </th>
+              {/* Kolom terakhir tidak perlu 'border-r' */}
               <th
-                className="text-left p-3 font-medium text-gray-900"
-                style={{ width: columnWidths.actions }}
+                className="text-left p-3 font-semibold text-gray-600"
+                style={{ minWidth: `${columnMinWidths.actions}px` }}
               >
                 Actions
               </th>
             </tr>
           </thead>
           <tbody>
-            {filteredTasks.map((task) => (
-              <tr key={task.id} className="border-b hover:bg-gray-50">
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.title }}
+            {filteredTasks.map((task) => {
+              const [emailPart = "", phonePart = ""] = (
+                task.target_contact || "|"
+              ).split("|");
+              return (
+                // === PERUBAHAN 2: Menambahkan warna selang-seling pada <tr> ===
+                <tr
+                  key={task.id}
+                  className="odd:bg-white even:bg-slate-50 hover:bg-teal-50 border-b"
                 >
-                  <Input
-                    value={getCurrentValue(task.id, "title") || ""}
-                    onChange={(e) =>
-                      updateEditingValue(task.id, "title", e.target.value)
-                    }
-                    onBlur={(e) =>
-                      handleFieldBlur(task.id, "title", e.target.value)
-                    }
-                    className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent font-medium"
-                  />
-                </td>
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.description }}
-                >
-                  <Input
-                    value={getCurrentValue(task.id, "description") || ""}
-                    onChange={(e) =>
-                      updateEditingValue(task.id, "description", e.target.value)
-                    }
-                    onBlur={(e) =>
-                      handleFieldBlur(task.id, "description", e.target.value)
-                    }
-                    className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent"
-                    placeholder="Add description..."
-                  />
-                </td>
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.deadline }}
-                >
-                  <Input
-                    type="datetime-local"
-                    value={
-                      task.deadline
-                        ? new Date(task.deadline)
-                            .toLocaleString("sv-SE", {
-                              // <-- PERBAIKAN DI SINI
-                              year: "numeric",
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: false, // Penting untuk format 24 jam
-                              timeZoneName: undefined, // Pastikan tidak ada zona waktu yang ditambahkan ke string
-                            })
-                            .replace(" ", "T") // Ganti spasi menjadi 'T'
-                        : ""
-                    }
-                    onChange={(e) =>
-                      updateEditingValue(task.id, "deadline", e.target.value)
-                    }
-                    onBlur={(e) =>
-                      handleFieldBlur(task.id, "deadline", e.target.value)
-                    }
-                    className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent"
-                  />
-                </td>
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.status }}
-                >
-                  <Select
-                    value={task.status}
-                    onValueChange={(value) =>
-                      updateTask(task.id, { status: value as Task["status"] })
-                    }
-                  >
-                    <SelectTrigger className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent">
-                      {getStatusBadge(task.status)}
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="overdue">Overdue</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </td>
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.reminder }}
-                >
-                  <Select
-                    value={task.remind_method || ""}
-                    onValueChange={(value) =>
-                      updateTask(task.id, {
-                        remind_method: value as Task["remind_method"],
-                      })
-                    }
-                  >
-                    <SelectTrigger className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent">
-                      <SelectValue placeholder="None" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="email">Email</SelectItem>
-                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                      <SelectItem value="both">Both</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </td>
-                <td
-                  className="p-3 border-r border-gray-100"
-                  style={{ width: columnWidths.contact }}
-                >
-                  <Input
-                    value={getCurrentValue(task.id, "target_contact") || ""}
-                    onChange={(e) =>
-                      updateEditingValue(
-                        task.id,
-                        "target_contact",
-                        e.target.value
-                      )
-                    }
-                    onBlur={(e) =>
-                      handleFieldBlur(task.id, "target_contact", e.target.value)
-                    }
-                    className="border-none p-0 h-auto focus-visible:ring-0 bg-transparent"
-                    placeholder="Contact info..."
-                  />
-                </td>
-                <td className="p-3" style={{ width: columnWidths.actions }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => deleteTask(task.id)}
-                    className="text-red-600 hover:text-red-800 p-1"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </td>
-              </tr>
-            ))}
+                  {/* === PERUBAHAN 3: Menambahkan 'border-r' pada <td> === */}
+                  <td className="p-3 align-top font-medium text-gray-800 border-r">
+                    {task.title}
+                  </td>
+                  <td className="p-3 align-top text-gray-600 border-r">
+                    {task.description || "-"}
+                  </td>
+                  <td className="p-3 align-top border-r">
+                    {formatDeadline(task.deadline ?? "")}
+                  </td>
+                  <td className="p-3 align-top border-r">
+                    {getStatusBadge(task.status)}
+                  </td>
+                  <td className="p-3 align-top capitalize border-r">
+                    {task.remind_method}
+                  </td>
+                  <td className="p-3 align-top border-r">
+                    {task.remind_days_before > 0
+                      ? `${task.remind_days_before} ${task.remind_days_before > 1 ? "days" : "day"} before`
+                      : "On the day"}
+                  </td>
+                  <td className="p-3 align-top border-r">
+                    <div className="flex flex-col gap-1">
+                      {task.remind_method === "email" && (
+                        <div className="flex items-center gap-2">
+                          <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />{" "}
+                          <span>{task.target_contact}</span>
+                        </div>
+                      )}
+                      {task.remind_method === "whatsapp" && (
+                        <div className="flex items-center gap-2">
+                          <MessageSquare className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />{" "}
+                          <span>{task.target_contact}</span>
+                        </div>
+                      )}
+                      {task.remind_method === "both" && (
+                        <>
+                          {emailPart && (
+                            <div className="flex items-center gap-2">
+                              <Mail className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />{" "}
+                              <span>{emailPart}</span>
+                            </div>
+                          )}
+                          {phonePart && (
+                            <div className="flex items-center gap-2">
+                              <MessageSquare className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />{" "}
+                              <span>{phonePart}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </td>
+                  {/* Kolom terakhir tidak perlu 'border-r' */}
+                  <td className="p-3 align-top">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEditingTask(task)}
+                        className="text-blue-500 hover:text-blue-700 hover:bg-blue-100 h-8 w-8"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteTask(task.id)}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-100 h-8 w-8"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 
         {filteredTasks.length === 0 && (
-          <div className="text-center py-8 text-gray-500">
-            {searchTerm || statusFilter !== "all"
-              ? "No tasks match your filters"
-              : "No tasks yet. Create your first task!"}
+          <div className="text-center py-12 text-gray-500">
+            <p className="font-semibold">No Notes Found</p>
+            <p className="text-sm mt-1">
+              {searchTerm || statusFilter !== "all"
+                ? "Try adjusting your search or filters."
+                : "Click 'Add Note' to create your first note!"}
+            </p>
           </div>
         )}
       </div>
 
-      <AddTaskDialog
-        open={showAddDialog}
-        onOpenChange={setShowAddDialog}
-        onTaskAdded={handleTaskAdded}
+      {showAddDialog && (
+        <AddTaskDialog
+          open={showAddDialog}
+          onOpenChange={setShowAddDialog}
+          onTaskAdded={handleTaskAdded}
+          defaultEmail={userProfile?.email || ""}
+          defaultPhone={userProfile?.phone_number || ""}
+        />
+      )}
+
+      <EditTaskDialog
+        open={editingTask !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) {
+            setEditingTask(null);
+          }
+        }}
+        taskToEdit={editingTask}
+        onTaskUpdated={handleTaskUpdated}
       />
 
-      <style jsx>{`
-        .resizing {
-          user-select: none;
-        }
-
-        table {
-          table-layout: fixed;
-        }
-
-        th,
-        td {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        th div:hover {
-          background-color: rgba(59, 130, 246, 0.3);
-        }
-
-        th div:active {
-          background-color: rgba(59, 130, 246, 0.5);
-        }
-      `}</style>
+      {/* Tidak perlu lagi <style jsx> karena kita menggunakan kelas Tailwind */}
     </div>
   );
 }

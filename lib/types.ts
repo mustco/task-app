@@ -1,6 +1,7 @@
 export interface User {
   id: string;
   email: string;
+  phone_number?: string;
   name?: string;
   role: "user" | "admin";
   status: "active" | "suspended";

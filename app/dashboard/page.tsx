@@ -34,12 +34,12 @@ export default async function DashboardPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600">Manage your tasks and deadlines</p>
+          <p className="text-gray-600">Manage your notes and deadlines</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-semibold text-gray-900">Total Tasks</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Total Notes</h3>
             <p className="text-3xl font-bold text-blue-600">
               {tasks?.length || 0}
             </p>
@@ -60,7 +60,7 @@ export default async function DashboardPage() {
 
         {/* Add TaskLimits component before TaskTable */}
         <TaskLimits user={userProfile} taskCount={tasks?.length || 0} />
-        <TaskTable initialTasks={tasks || []} />
+        <TaskTable initialTasks={tasks || []} userProfile={userProfile} />
       </div>
     </DashboardLayout>
   );

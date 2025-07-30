@@ -53,6 +53,8 @@ export function ReminderTemplate({
           borderRadius: "12px",
           overflow: "hidden",
           boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+          border: "1px solid #e5e7eb", // <--- Tambahkan ini
+          boxSizing: "border-box",
         }}
       >
                 {/* Bagian Header dengan Logo */}       {" "}
@@ -60,7 +62,7 @@ export function ReminderTemplate({
           style={{
             textAlign: "center",
             padding: "25px",
-            backgroundColor: accentColor,
+            backgroundColor: "#eff6ff",
           }}
         >
                    {" "}
@@ -91,8 +93,8 @@ export function ReminderTemplate({
           <h1
             style={{ color: textColor, margin: "0 0 20px 0", fontSize: "22px" }}
           >
-                        Halo {firstName}, ini pengingat untuk tugas Anda:      
-               {" "}
+                        Halo {firstName},ListKu bantu ingetin catatanmu yang
+            penting nih, jangan lupa ya! 😌          {" "}
           </h1>
                     {/* Detail Tugas */}         {" "}
           <div
@@ -106,7 +108,7 @@ export function ReminderTemplate({
                        {" "}
             <h2
               style={{
-                color: primaryColor,
+                color: textColor,
                 margin: "0 0 10px 0",
                 fontSize: "20px",
               }}
@@ -142,16 +144,30 @@ export function ReminderTemplate({
               target="_blank"
               rel="noopener noreferrer"
               style={{
-                display: "inline-block",
-                padding: "12px 25px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px 20px",
                 backgroundColor: accentColor,
                 color: "white",
                 textDecoration: "none",
-                borderRadius: "6px",
+                borderRadius: "8px",
                 fontWeight: "bold",
+                fontSize: "14px",
+                boxShadow: "0 4px 12px rgba(59, 130, 246, 0.3)",
+                transition: "all 0.2s ease-in-out",
               }}
             >
-                            Lihat Tugas di Aplikasi            {" "}
+              Lihat Tugas di Aplikasi
+              <span
+                style={{
+                  marginLeft: "10px",
+                  transform: "translateY(-1px)",
+                  display: "inline-block",
+                }}
+              >
+                ➜
+              </span>
             </a>
                      {" "}
           </div>

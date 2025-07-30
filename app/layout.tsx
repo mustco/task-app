@@ -7,7 +7,7 @@ const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
   title: "ListKu",
-  description: "Manage your tasks with automated reminders",
+  description: "Manage your notes with automated reminders",
   icons: {
     icon: "/icon-listku.png", // Pastikan path ini benar
   },

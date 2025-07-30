@@ -116,6 +116,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div>
               <Label htmlFor="email">Email Address</Label>
               <Input
+                className="!border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
                 id="email"
                 type="email"
                 value={email}
@@ -127,6 +132,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div>
               <Label htmlFor="name">Full Name</Label>
               <Input
+                className="!border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
                 id="name"
                 type="text"
                 value={name}
@@ -136,14 +146,26 @@ export function ProfileForm({ user }: ProfileFormProps) {
             </div>
             <div>
               <Label>Role</Label>
-              <Input value={user?.role || ""} disabled className="bg-gray-50" />
+              <Input
+                value={user?.role || ""}
+                disabled
+                className="bg-gray-50 !border !border-gray-300  !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
+              />
             </div>
             <div>
               <Label>Status</Label>
               <Input
                 value={user?.status || ""}
                 disabled
-                className="bg-gray-50"
+                className="bg-gray-50 !border !border-gray-300 !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
               />
             </div>
             <Button type="submit" disabled={loading}>
@@ -162,6 +184,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div>
               <Label htmlFor="newPassword">New Password</Label>
               <Input
+                className="!border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
                 id="newPassword"
                 type="password"
                 value={newPassword}
@@ -172,6 +199,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div>
               <Label htmlFor="confirmPassword">Confirm New Password</Label>
               <Input
+                className="!border !border-gray-300 !bg-white !text-black 
+             focus:!border-gray-500 focus:!ring-0 
+             !ring-0 !ring-offset-0 !shadow-none 
+             !outline-none !rounded-md 
+             placeholder:text-gray-400"
                 id="confirmPassword"
                 type="password"
                 value={confirmPassword}
