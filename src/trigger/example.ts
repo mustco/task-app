@@ -20,7 +20,7 @@ export const firstScheduledTask = schedules.task({
     // Format the timestamp using the timezone from the payload
     const formatted = payload.timestamp.toLocaleString("en-US", {
       timeZone: payload.timezone,
-    });
+    }); 
 
     logger.log(formatted);
   },

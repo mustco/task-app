@@ -21,9 +21,9 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
 
   const getPlanFeatures = () => {
     if (isFreePlan) {
-      return "Basic task management with email notifications";
+      return "Basic notes management with email notifications";
     }
-    return "Advanced task management with WhatsApp & email notifications, unlimited tasks, and priority support";
+    return "Advanced notes management with WhatsApp & email notifications, unlimited notes, and priority support";
   };
 
   return (
@@ -94,7 +94,7 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Unlimited Tasks</span>
+              <span>Unlimited Notes</span>
               <span className={isPremium ? "text-green-600" : "text-gray-400"}>
                 {isPremium ? "✓ Premium" : "Premium Only"}
               </span>

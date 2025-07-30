@@ -33,8 +33,8 @@ export function TaskLimits({ user, taskCount }: TaskLimitsProps) {
       <AlertDescription className="flex items-center justify-between">
         <span>
           {isAtLimit
-            ? "You've reached the free plan limit of 10 tasks."
-            : `You have ${remainingTasks} tasks remaining on the free plan.`}
+            ? "You've reached the free plan limit of 10 notes."
+            : `You have ${remainingTasks} notes remaining on the free plan.`}
         </span>
         <Button size="sm" disabled>
           Upgrade to Premium

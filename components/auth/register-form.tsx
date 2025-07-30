@@ -1,7 +1,6 @@
 "use client";
 
 import type React from "react";
-
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,12 +13,12 @@ export function RegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const supabase = createClient();
-  // Add name field to the registration form
-  const [name, setName] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,13 +35,14 @@ export function RegisterForm() {
     }
 
     try {
-      // Update the signUp call to include name:
       const { error } = await supabase.auth.signUp({
         email,
         password,
+        phone: phone || undefined,
         options: {
           data: {
             name: name,
+            phone_number: phone || null,
           },
         },
       });
@@ -85,20 +85,45 @@ export function RegisterForm() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1"
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+              focus:!border-gray-500 focus:!ring-0 
+              !ring-0 !ring-offset-0 !shadow-none 
+              !outline-none !rounded-md 
+              placeholder:text-gray-400"
           />
         </div>
-        {/* Add name input field after email field: */}
         <div>
           <Label htmlFor="name">Full Name</Label>
           <Input
             id="name"
             name="name"
             type="text"
+            autoComplete="name"
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="mt-1"
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+              focus:!border-gray-500 focus:!ring-0 
+              !ring-0 !ring-offset-0 !shadow-none 
+              !outline-none !rounded-md 
+              placeholder:text-gray-400 "
+          />
+        </div>
+        <div>
+          <Label htmlFor="phone">Phone Number (Optional)</Label>
+          <Input
+            id="phone"
+            name="phone"
+            type="tel"
+            autoComplete="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+              focus:!border-gray-500 focus:!ring-0 
+              !ring-0 !ring-offset-0 !shadow-none 
+              !outline-none !rounded-md 
+              placeholder:text-gray-400 "
+            placeholder="e.g., 081234567890"
           />
         </div>
         <div>
@@ -111,7 +136,11 @@ export function RegisterForm() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1"
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+              focus:!border-gray-500 focus:!ring-0 
+              !ring-0 !ring-offset-0 !shadow-none 
+              !outline-none !rounded-md 
+              placeholder:text-gray-400 "
           />
         </div>
         <div>
@@ -124,7 +153,11 @@ export function RegisterForm() {
             required
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="mt-1"
+            className="mt-1 !border !border-gray-300 !bg-white !text-black 
+              focus:!border-gray-500 focus:!ring-0 
+              !ring-0 !ring-offset-0 !shadow-none 
+              !outline-none !rounded-md 
+              placeholder:text-gray-400 "
           />
         </div>
       </div>
