@@ -2,14 +2,11 @@
 
 import { task } from "@trigger.dev/sdk/v3";
 import { Resend } from "resend";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const fonnteToken = process.env.FONNTE_API_TOKEN;
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+
 
 interface TaskPayload {
   taskId: string;
@@ -153,7 +150,7 @@ export const sendTaskReminder = task({
     const anySuccess = emailStatus?.success || whatsappStatus?.success;
     if (anySuccess) {
       try {
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabaseAdmin
           .from("tasks")
           .update({ reminder_sent_at: new Date().toISOString() })
           .eq("id", payload.taskId);

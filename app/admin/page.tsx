@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout";
 import { AdminStats } from "@/components/admin/admin-stats";
 import { UserManagement } from "@/components/admin/user-management";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export default async function AdminPage() {
   const supabase = await createClient();
@@ -16,10 +17,6 @@ export default async function AdminPage() {
   }
 
   // Get user profile and check if admin (gunakan service role)
-  const supabaseAdmin = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
 
   const { data: userProfile } = await supabaseAdmin
     .from("users")
@@ -56,7 +53,11 @@ export default async function AdminPage() {
           tasks={allTasks || []}
           errorLogs={errorLogs || []}
         />
-        <UserManagement users={allUsers || []} />
+        <UserManagement
+          users={allUsers || []}
+          currentUserRole={userProfile.role}
+          currentUserId={userProfile.id}
+        />
       </div>
     </DashboardLayout>
   );
