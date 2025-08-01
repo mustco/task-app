@@ -2,10 +2,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 import { z } from "zod";
 import validator from "validator";
-import { scheduleTaskReminder } from "@/src/trigger/task";
+import { scheduleReminderJob } from "@/src/trigger/scheduler"; // Import background job
 import type { User, Task, ErrorLog } from "@/lib/types";
 import { ratelimit } from "@/lib/upstash-ratelimit";
 
@@ -95,49 +94,9 @@ const ServerTaskCreateSchema = z
     }
   });
 
-// ✅ OPTIMIZATION 1: Async reminder scheduling function
-async function scheduleReminderAsync(
-  newTask: Task,
-  user: any,
-  reminderData: {
-    recipientEmailForReminder?: string;
-    recipientPhoneForReminder?: string;
-  }
-) {
-  try {
-    const firstName =
-      (user as any).name?.split(" ")[0] || user?.email?.split("@")[0] || "User";
-
-    const handle = await scheduleTaskReminder({
-      id: newTask.id,
-      title: newTask.title,
-      description: newTask.description ?? "",
-      deadline: newTask.deadline ?? "",
-      reminderDays: newTask.reminder_days!,
-      recipientEmail: reminderData.recipientEmailForReminder || "",
-      recipientPhone: reminderData.recipientPhoneForReminder,
-      firstName: firstName,
-    });
-
-    // Update trigger_handle_id asynchronously
-    await supabaseAdmin
-      .from("tasks")
-      .update({ trigger_handle_id: handle.id })
-      .eq("id", newTask.id);
-
-    console.log(`✅ Reminder scheduled for task ${newTask.id}`);
-  } catch (error) {
-    console.error(
-      `❌ Failed to schedule reminder for task ${newTask.id}:`,
-      error
-    );
-    // Optionally log to error tracking service
-  }
-}
-
 export async function POST(request: NextRequest) {
   try {
-    // ✅ OPTIMIZATION 2: Early authentication check
+    // ✅ STEP 1: Early authentication check
     const supabase = await createClient();
     const {
       data: { user },
@@ -148,7 +107,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // ✅ OPTIMIZATION 3: Parallel rate limiting & body parsing
+    // ✅ STEP 2: Parallel rate limiting & body parsing
     const [rateLimitResult, body] = await Promise.all([
       ratelimit.limit(user.id || request.ip || "anonymous"),
       request.json(),
@@ -180,7 +139,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ✅ OPTIMIZATION 4: Fast validation
+    // ✅ STEP 3: Fast validation
     const parsed = ServerTaskCreateSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -204,7 +163,7 @@ export async function POST(request: NextRequest) {
       reminderDays,
     } = parsed.data;
 
-    // ✅ OPTIMIZATION 5: Prepare data efficiently
+    // ✅ STEP 4: Prepare data efficiently
     const taskToInsert = {
       user_id: user.id,
       title: title,
@@ -214,6 +173,7 @@ export async function POST(request: NextRequest) {
       remind_method: null as any,
       target_contact: null as string | null,
       reminder_days: null as number | null,
+      trigger_handle_id: null, // Will be updated by background job
     };
 
     let reminderData: {
@@ -256,7 +216,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ✅ OPTIMIZATION 6: Database insert
+    // ✅ STEP 5: Database insert (fast operation)
     const { data: newTask, error: supabaseError } = await supabase
       .from("tasks")
       .insert(taskToInsert)
@@ -271,17 +231,56 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ✅ OPTIMIZATION 7: Schedule reminder asynchronously (fire-and-forget)
+    // ✅ STEP 6: Trigger background job (fire-and-forget)
     if (showReminder) {
-      // Don't await this - let it run in background
-      scheduleReminderAsync(newTask, user, reminderData);
+      try {
+        const firstName =
+          (user as any).name?.split(" ")[0] ||
+          user?.email?.split("@")[0] ||
+          "User";
+
+        console.log(
+          `🚀 Triggering background reminder scheduling for task ${newTask.id}`
+        );
+
+        // Fire-and-forget: tidak menunggu job selesai
+        scheduleReminderJob
+          .trigger({
+            taskId: newTask.id,
+            taskData: {
+              title: newTask.title,
+              description: newTask.description,
+              deadline: newTask.deadline!,
+              reminder_days: newTask.reminder_days!,
+            },
+            reminderData,
+            firstName,
+          })
+          .catch((error) => {
+            // Log error tapi jangan fail response
+            console.error(
+              `❌ Failed to trigger background scheduling for task ${newTask.id}:`,
+              error
+            );
+          });
+
+        console.log(`✅ Background job triggered for task ${newTask.id}`);
+      } catch (error) {
+        // Log error tapi jangan fail response
+        console.error(
+          `❌ Error triggering background job for task ${newTask.id}:`,
+          error
+        );
+      }
     }
 
-    // ✅ OPTIMIZATION 8: Return response immediately
+    // ✅ STEP 7: Return response immediately (ultra fast)
     return NextResponse.json(
       {
         success: true,
-        message: "Task created successfully",
+        message: showReminder
+          ? "Task created successfully! Reminder is being scheduled in the background."
+          : "Task created successfully!",
         task: newTask,
       },
       { status: 201 }
