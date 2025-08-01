@@ -150,25 +150,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 5. Trigger Reminder Scheduling (jika diperlukan)
-    // Ini dilakukan secara 'fire-and-forget' agar tidak memblokir response ke user.
-    // Netlify akan menangani request ini secara terpisah.
+    // 5. Trigger Reminder Scheduling (FIXED: Menggunakan await)
+    // Fungsi ini sekarang akan menunggu (await) sampai proses fetch selesai.
     if (validatedData.showReminder && newTask) {
-      // Dapatkan URL basis dari request untuk memanggil API lain
-      const baseUrl = new URL(request.url).origin;
+      try {
+        // Dapatkan URL basis dari request untuk memanggil API lain
+        const baseUrl = new URL(request.url).origin;
 
-      fetch(`${baseUrl}/api/schedule-reminder`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Penting: Teruskan cookie otentikasi agar schedule-reminder tahu siapa user-nya
-          Cookie: request.headers.get("cookie") || "",
-        },
-        body: JSON.stringify({ taskId: newTask.id }),
-      }).catch((err) => {
+        const scheduleResponse = await fetch(
+          `${baseUrl}/api/schedule-reminder`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              // Penting: Teruskan cookie otentikasi agar schedule-reminder tahu siapa user-nya
+              Cookie: request.headers.get("cookie") || "",
+            },
+            body: JSON.stringify({ taskId: newTask.id }),
+          }
+        );
+
+        // Jika penjadwalan gagal, log errornya tapi jangan hentikan proses utama
+        if (!scheduleResponse.ok) {
+          const errorBody = await scheduleResponse.json();
+          console.error(
+            "Failed to trigger reminder scheduling. Status:",
+            scheduleResponse.status,
+            "Body:",
+            errorBody
+          );
+        } else {
+          console.log(`Successfully triggered reminder for task ${newTask.id}`);
+        }
+      } catch (err) {
         // Log error jika trigger gagal, tapi jangan sampai membuat request utama gagal
-        console.error("Failed to trigger reminder scheduling:", err);
-      });
+        console.error("Error during fetch to schedule-reminder:", err);
+      }
     }
 
     // 6. Kembalikan task yang baru dibuat
