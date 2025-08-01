@@ -2,88 +2,135 @@
 
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
+// Menggunakan import lokal untuk fungsi Trigger.dev
+import { scheduleTaskReminder } from "../../src/trigger/task";
 
 // Inisialisasi Supabase Admin Client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-// Background Function Handler
+/**
+ * Netlify Background Function untuk memproses dan menjadwalkan reminder task.
+ * Fungsi ini dijalankan secara asinkron dan tidak memblokir response ke user.
+ */
 export const handler: Handler = async (event, context) => {
   console.log("🚀 Background function started:", new Date().toISOString());
-  try {
-    // Parse request body
-    const { taskId, userId } = JSON.parse(event.body || "{}");
-    if (!taskId || !userId) {
-      console.error("Missing taskId or userId");
-      return {
-        statusCode: 400,
-        body: JSON.stringify({ error: "Missing taskId or userId" }),
-      };
-    } // 1. Fetch task details from database
 
+  // Log payload yang masuk
+  let payload: { taskId: string; userId: string };
+  try {
+    payload = JSON.parse(event.body || "{}");
+    console.log(`Received payload:`, payload);
+  } catch (parseError) {
+    console.error("❌ Failed to parse event body:", parseError);
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Invalid JSON payload" }),
+    };
+  }
+
+  const { taskId, userId } = payload;
+
+  // Validasi payload
+  if (!taskId || !userId) {
+    console.error("❌ Missing taskId or userId in payload");
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Missing taskId or userId" }),
+    };
+  }
+
+  try {
+    // 1. Ambil detail task dari database menggunakan supabaseAdmin
     const { data: task, error: taskError } = await supabaseAdmin
       .from("tasks")
       .select(
         `
-        id,
-        title,
-        description,
-        deadline,
-        remind_method,
-        target_contact,
-        reminder_days,
-        user_id
-      `
+        id,
+        title,
+        description,
+        deadline,
+        remind_method,
+        target_contact,
+        reminder_days,
+        user_id
+      `
       )
       .eq("id", taskId)
       .eq("user_id", userId)
       .single();
 
     if (taskError || !task) {
-      console.error("Task not found:", taskError);
+      console.error(
+        "❌ Task not found or fetching failed:",
+        taskError?.message || "Data not found."
+      );
       return {
         statusCode: 404,
         body: JSON.stringify({ error: "Task not found" }),
       };
-    } // 2. Fetch user details for personalization
+    }
+    console.log("✅ Task fetched successfully.");
 
+    // 2. Ambil detail user untuk personalisasi pesan
     const { data: user, error: userError } = await supabaseAdmin
       .from("profiles")
-      .select("first_name, email, phone")
+      .select("first_name")
       .eq("id", userId)
       .single();
 
     if (userError) {
-      console.warn("User profile not found, using defaults");
-    } // 3. Prepare reminder data
+      console.warn(
+        "User profile not found for personalization, using default name."
+      );
+    }
 
-    const reminderData = {
-      id: (task as any).id,
-      title: (task as any).title,
-      description: (task as any).description,
-      deadline: (task as any).deadline,
-      reminderDays: (task as any).reminder_days || 1,
-      recipientEmail: "",
-      recipientPhone: "",
-      firstName: user?.first_name || "User",
-    }; // Parse target contact based on remind method
+    // 3. Siapkan data yang diperlukan untuk Trigger.dev
+    const recipientEmail =
+      task.remind_method === "email" || task.remind_method === "both"
+        ? task.remind_method === "both"
+          ? task.target_contact?.split("|")[0]
+          : task.target_contact
+        : undefined;
 
-    if ((task as any).remind_method === "email") {
-      reminderData.recipientEmail = (task as any).target_contact || "";
-    } else if ((task as any).remind_method === "whatsapp") {
-      reminderData.recipientPhone = (task as any).target_contact || "";
-    } else if ((task as any).remind_method === "both") {
-      const [email, phone] = ((task as any).target_contact || "").split("|");
-      reminderData.recipientEmail = email || "";
-      reminderData.recipientPhone = phone || "";
-    } // 4. Schedule with Trigger.dev
+    const recipientPhone =
+      task.remind_method === "whatsapp" || task.remind_method === "both"
+        ? task.remind_method === "both"
+          ? task.target_contact?.split("|")[1]
+          : task.target_contact
+        : undefined;
 
-    console.log("📅 Scheduling reminder with Trigger.dev..."); // Import scheduleTaskReminder function
-    const { scheduleTaskReminder } = await import("@/src/trigger/task");
+  const reminderData = {
+    id: task.id,
+    title: task.title,
+    description: task.description || undefined,
+    deadline: task.deadline,
+    reminderDays: task.reminder_days || 1,
+    recipientEmail: recipientEmail,
+    recipientPhone: recipientPhone,
+    firstName: user?.first_name || "User",
+  };
+
+    // Validasi final sebelum memanggil Trigger.dev
+    if (!reminderData.recipientEmail && !reminderData.recipientPhone) {
+      console.error(
+        "❌ No valid recipient contact found. Skipping reminder scheduling."
+      );
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "No valid recipient contact found" }),
+      };
+    }
+
+    console.log("✅ Reminder data prepared:", reminderData);
+
+    // 4. Jadwalkan task dengan Trigger.dev
+    console.log("📅 Scheduling reminder with Trigger.dev...");
     const handle = await scheduleTaskReminder(reminderData);
-    console.log(`✅ Successfully scheduled reminder: ${handle.id}`); // 5. Update task with trigger handle (optional)
+    console.log(`✅ Successfully scheduled reminder with handle: ${handle.id}`);
 
+    // 5. Update task di database dengan handle dari Trigger.dev
     await supabaseAdmin
       .from("tasks")
       .update({
@@ -91,6 +138,8 @@ export const handler: Handler = async (event, context) => {
         reminder_scheduled_at: new Date().toISOString(),
       })
       .eq("id", taskId);
+
+    console.log(`✅ Task ${taskId} updated with trigger handle.`);
 
     return {
       statusCode: 200,
@@ -102,7 +151,7 @@ export const handler: Handler = async (event, context) => {
       }),
     };
   } catch (error: any) {
-    console.error("❌ Background function error:", error);
+    console.error("❌ Background function error during execution:", error);
     return {
       statusCode: 500,
       body: JSON.stringify({
