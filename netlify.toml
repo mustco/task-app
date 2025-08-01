@@ -1,0 +1,9 @@
+[build]
+  functions = "netlify/functions"
+  
+[functions]
+  node_bundler = "esbuild"
+  
+[functions."schedule-reminder-background"]
+  # Specific config for background function
+  timeout = 900 # 15 minutes max
