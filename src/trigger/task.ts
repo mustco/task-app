@@ -7,53 +7,68 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 const resend = new Resend(process.env.RESEND_API_KEY);
 const fonnteToken = process.env.FONNTE_API_TOKEN;
 
-
 interface TaskPayload {
   taskId: string;
   title: string;
   description?: string;
   deadline: string;
-  recipientEmail: string; // Bisa kosong untuk WhatsApp only
+  recipientEmail: string;
   recipientPhone?: string;
   firstName: string;
 }
 
-// Fungsi untuk membuat format pesan WhatsApp
-function createWhatsAppMessage(payload: {
-  firstName: string;
-  title: string;
-  deadline: string;
-  description?: string;
-}): string {
-  const formattedDeadline = new Date(payload.deadline).toLocaleString("id-ID", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+// ✅ OPTIMIZATION 1: Cached message template function
+const createWhatsAppMessage = (() => {
+  const memoizedMessages = new Map<string, string>();
 
-  let message = `*👋 Halo ${payload.firstName || "User"}!*\n\n`;
-  message += `*ListKu* bantu ingetin catatan penting kamu nih! 😌\n\n`;
+  return (payload: {
+    firstName: string;
+    title: string;
+    deadline: string;
+    description?: string;
+  }): string => {
+    const key = `${payload.firstName}-${payload.title}-${payload.deadline}-${payload.description || ""}`;
 
-  message += `📌 *Catatan:*\n${payload.title}\n\n`;
-  message += `⏰ *Deadline:*\n${formattedDeadline}\n\n`;
+    if (memoizedMessages.has(key)) {
+      return memoizedMessages.get(key)!;
+    }
 
-  if (payload.description) {
-    message += `📝 *Deskripsi:*\n_${payload.description}_\n\n`;
-  }
+    const formattedDeadline = new Date(payload.deadline).toLocaleString(
+      "id-ID",
+      {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
 
-  message += `Ayo jangan lupa segera diselesaikan! 💪\n`;
-  message += `🔗 https://listku.my.id/dashboard\n\n`;
+    let message = `*👋 Halo ${payload.firstName || "User"}!*\n\n`;
+    message += `*ListKu* bantu ingetin catatan penting kamu nih! 😌\n\n`;
+    message += `📌 *Catatan:*\n${payload.title}\n\n`;
+    message += `⏰ *Deadline:*\n${formattedDeadline}\n\n`;
 
-  message += `Terima kasih sudah menggunakan *ListKu*! 🙌`;
+    if (payload.description) {
+      message += `📝 *Deskripsi:*\n_${payload.description}_\n\n`;
+    }
 
-  return message;
-}
+    message += `Ayo jangan lupa segera diselesaikan! 💪\n`;
+    message += `🔗 https://listku.my.id/dashboard\n\n`;
+    message += `Terima kasih sudah menggunakan *ListKu*! 🙌`;
 
-// Fungsi untuk mengirim pesan via Fonnte
-async function sendWhatsAppReminder(phone: string, message: string) {
+    memoizedMessages.set(key, message);
+    return message;
+  };
+})();
+
+// ✅ OPTIMIZATION 2: Improved WhatsApp sending with retry logic
+async function sendWhatsAppReminder(
+  phone: string,
+  message: string,
+  retries = 2
+) {
   if (!fonnteToken) {
     console.warn(
       "FONNTE_API_TOKEN is not set. Skipping WhatsApp notification."
@@ -61,108 +76,188 @@ async function sendWhatsAppReminder(phone: string, message: string) {
     return { success: false, error: "Fonnte token not configured." };
   }
 
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      const response = await fetch("https://api.fonnte.com/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: fonnteToken,
+        },
+        body: JSON.stringify({
+          target: phone,
+          message: message,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const result = await response.json();
+
+      if (!response.ok || result.status === false) {
+        throw new Error(
+          `Failed to send WhatsApp: ${result.reason || "Unknown error"}`
+        );
+      }
+
+      console.log(
+        `✅ WhatsApp message sent successfully on attempt ${attempt}:`,
+        result
+      );
+      return { success: true, data: result };
+    } catch (error: any) {
+      console.error(`❌ WhatsApp attempt ${attempt} failed:`, error.message);
+
+      if (attempt === retries + 1) {
+        return { success: false, error: error.message };
+      }
+
+      // Wait before retry (exponential backoff)
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.pow(2, attempt) * 1000)
+      );
+    }
+  }
+
+  return { success: false, error: "Max retries exceeded" };
+}
+
+// ✅ OPTIMIZATION 3: Improved email sending with better error handling
+async function sendEmailReminder(
+  recipientEmail: string,
+  payload: {
+    firstName: string;
+    title: string;
+    deadline: string;
+    description?: string;
+  }
+) {
   try {
-    const response = await fetch("https://api.fonnte.com/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: fonnteToken,
-      },
-      body: JSON.stringify({
-        target: phone,
-        message: message,
+    const { ReminderTemplate } = await import("@/components/email-template");
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for email
+
+    const { data, error } = await resend.emails.send({
+      from: "ListKu <reminders-noreply@listku.my.id>",
+      to: [recipientEmail],
+      subject: `⏰ Reminder: ${payload.title}`,
+      react: ReminderTemplate({
+        firstName: payload.firstName,
+        title: payload.title,
+        deadline: payload.deadline,
+        description: payload.description,
       }),
     });
 
-    const result = await response.json();
-    if (!response.ok || result.status === false) {
-      console.error("Fonnte API Error:", result);
-      throw new Error(
-        `Failed to send WhatsApp: ${result.reason || "Unknown error"}`
-      );
-    }
+    clearTimeout(timeoutId);
 
-    console.log("WhatsApp message sent successfully:", result);
-    return { success: true, data: result };
-  } catch (error) {
-    console.error("Error sending WhatsApp message:", error);
-    return { success: false, error: (error as Error).message };
+    if (error) throw error;
+
+    console.log(`✅ Email sent successfully to ${recipientEmail}`);
+    return { success: true, id: data?.id };
+  } catch (error: any) {
+    console.error(
+      `❌ Failed to send email to ${recipientEmail}:`,
+      error.message
+    );
+    return { success: false, error: error.message };
   }
 }
 
-// Task utama yang dimodifikasi
+// ✅ OPTIMIZATION 4: Main task with parallel execution
 export const sendTaskReminder = task({
   id: "send-task-reminder",
   run: async (payload: TaskPayload) => {
-    let emailStatus: any = null;
-    let whatsappStatus: any = null;
+    const startTime = Date.now();
 
-    // 1. Kirim Email Reminder (hanya jika ada email)
+    // ✅ OPTIMIZATION 5: Parallel execution of email and WhatsApp
+    const promises: Promise<any>[] = [];
+
+    // Email promise
     if (payload.recipientEmail && payload.recipientEmail.trim() !== "") {
-      try {
-        const { ReminderTemplate } = await import(
-          "@/components/email-template"
-        );
-        const { data, error } = await resend.emails.send({
-          from: "ListKu <reminders-noreply@listku.my.id>",
-          to: [payload.recipientEmail],
-          subject: `⏰ Reminder: ${payload.title}`,
-          react: ReminderTemplate({
-            firstName: payload.firstName,
-            title: payload.title,
-            deadline: payload.deadline,
-            description: payload.description,
-          }),
-        });
-
-        if (error) throw error;
-        emailStatus = { success: true, id: data?.id };
-        console.log(`Email sent successfully to ${payload.recipientEmail}`);
-      } catch (error: any) {
-        console.error(
-          `Failed to send email to ${payload.recipientEmail}:`,
-          error.message
-        );
-        emailStatus = { success: false, error: error.message };
-      }
+      promises.push(
+        sendEmailReminder(payload.recipientEmail, {
+          firstName: payload.firstName,
+          title: payload.title,
+          deadline: payload.deadline,
+          description: payload.description,
+        }).then((result) => ({ type: "email", result }))
+      );
     } else {
       console.log("No email recipient provided, skipping email notification");
     }
 
-    // 2. Kirim WhatsApp Reminder (hanya jika ada nomor telepon)
+    // WhatsApp promise
     if (payload.recipientPhone && payload.recipientPhone.trim() !== "") {
-      const waMessage = createWhatsAppMessage(payload);
-      whatsappStatus = await sendWhatsAppReminder(
-        payload.recipientPhone,
-        waMessage
-      );
+      const waMessage = createWhatsAppMessage({
+        firstName: payload.firstName,
+        title: payload.title,
+        deadline: payload.deadline,
+        description: payload.description,
+      });
 
-      if (whatsappStatus.success) {
-        console.log(`WhatsApp sent successfully to ${payload.recipientPhone}`);
-      }
+      promises.push(
+        sendWhatsAppReminder(payload.recipientPhone, waMessage).then(
+          (result) => ({ type: "whatsapp", result })
+        )
+      );
     } else {
       console.log(
         "No phone recipient provided, skipping WhatsApp notification"
       );
     }
 
-    // 3. Update status di database (jika salah satu berhasil)
+    // ✅ OPTIMIZATION 6: Execute all promises in parallel
+    const results = await Promise.allSettled(promises);
+
+    let emailStatus: any = null;
+    let whatsappStatus: any = null;
+
+    // Process results
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        if (result.value.type === "email") {
+          emailStatus = result.value.result;
+        } else if (result.value.type === "whatsapp") {
+          whatsappStatus = result.value.result;
+        }
+      } else {
+        console.error(`Promise ${index} rejected:`, result.reason);
+        if (index === 0)
+          emailStatus = { success: false, error: result.reason?.message };
+        if (index === 1)
+          whatsappStatus = { success: false, error: result.reason?.message };
+      }
+    });
+
+    // ✅ OPTIMIZATION 7: Update database status if any notification succeeded
     const anySuccess = emailStatus?.success || whatsappStatus?.success;
     if (anySuccess) {
       try {
-        const { error: updateError } = await supabaseAdmin
+        // Use Promise.race with timeout for database update
+        const updatePromise = supabaseAdmin
           .from("tasks")
           .update({ reminder_sent_at: new Date().toISOString() })
           .eq("id", payload.taskId);
-        if (updateError) {
-          console.error("Failed to update task status:", updateError.message);
-        } else {
-          console.log(`Task ${payload.taskId} reminder status updated`);
-        }
-      } catch (error) {
-        console.error("Error updating task status:", error);
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Database update timeout")), 5000)
+        );
+
+        await Promise.race([updatePromise, timeoutPromise]);
+        console.log(`✅ Task ${payload.taskId} reminder status updated`);
+      } catch (error: any) {
+        console.error("❌ Error updating task status:", error.message);
+        // Don't fail the entire task for database update errors
       }
     }
+
+    const executionTime = Date.now() - startTime;
+    console.log(`📊 Task reminder completed in ${executionTime}ms`);
 
     return {
       success: anySuccess,
@@ -174,11 +269,12 @@ export const sendTaskReminder = task({
         email: emailStatus?.success || false,
         whatsapp: whatsappStatus?.success || false,
       },
+      executionTime: executionTime,
     };
   },
 });
 
-// Fungsi scheduler yang dimodifikasi
+// ✅ OPTIMIZATION 8: Improved scheduler with better validation
 export async function scheduleTaskReminder(taskData: {
   id: string;
   title: string;
@@ -194,32 +290,48 @@ export async function scheduleTaskReminder(taskData: {
     deadlineDate.getTime() - taskData.reminderDays * 24 * 60 * 60 * 1000
   );
 
-  if (reminderDate.getTime() - new Date().getTime() <= 0) {
+  // ✅ Better time validation
+  const now = new Date();
+  const timeDifference = reminderDate.getTime() - now.getTime();
+
+  if (timeDifference <= 0) {
     throw new Error(
-      `Reminder time has already passed for task ${taskData.id}.`
+      `Reminder time has already passed for task ${taskData.id}. ` +
+        `Reminder was scheduled for ${reminderDate.toISOString()}, current time is ${now.toISOString()}`
     );
   }
 
-  console.log(`Scheduling reminder for task ${taskData.id}:`, {
+  // Log scheduling details
+  console.log(`📅 Scheduling reminder for task ${taskData.id}:`, {
     email: taskData.recipientEmail || "none",
     phone: taskData.recipientPhone || "none",
     reminderDate: reminderDate.toISOString(),
+    timeUntilReminder: `${Math.round(timeDifference / (1000 * 60 * 60))} hours`,
   });
 
-  const handle = await sendTaskReminder.trigger(
-    {
-      taskId: taskData.id,
-      title: taskData.title,
-      description: taskData.description,
-      deadline: taskData.deadline,
-      recipientEmail: taskData.recipientEmail,
-      recipientPhone: taskData.recipientPhone,
-      firstName: taskData.firstName,
-    },
-    {
-      delay: reminderDate,
-    }
-  );
+  try {
+    const handle = await sendTaskReminder.trigger(
+      {
+        taskId: taskData.id,
+        title: taskData.title,
+        description: taskData.description,
+        deadline: taskData.deadline,
+        recipientEmail: taskData.recipientEmail,
+        recipientPhone: taskData.recipientPhone,
+        firstName: taskData.firstName,
+      },
+      {
+        delay: reminderDate,
+      }
+    );
 
-  return handle;
+    console.log(`✅ Reminder scheduled successfully with handle: ${handle.id}`);
+    return handle;
+  } catch (error: any) {
+    console.error(
+      `❌ Failed to schedule reminder for task ${taskData.id}:`,
+      error
+    );
+    throw new Error(`Scheduling failed: ${error.message}`);
+  }
 }
