@@ -1,23 +1,63 @@
-// app/api/delete-task/route.ts (UPDATED VERSION)
+// app/api/tasks/delete/route.ts (OPTIMIZED VERSION)
 
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase/admin"; // Untuk operasi yang membutuhkan hak admin (misal: membatalkan trigger)
-import { createClient } from "@/lib/supabase/server"; // Untuk klien yang diautentikasi (mematuhi RLS)
-import { z } from "zod"; // Untuk validasi input
+import { createClient } from "@/lib/supabase/server";
+import { z } from "zod";
 
-// --- Skema Validasi Input dengan Zod ---
+// --- Input Validation Schema ---
 const DeleteTaskSchema = z.object({
-  taskId: z.string().uuid("Invalid taskId format. Must be a UUID."), // Pastikan taskId adalah UUID yang valid
+  taskId: z.string().uuid("Invalid taskId format. Must be a UUID."),
 });
+
+// --- Background job untuk cancel reminder (async) ---
+async function cancelReminderInBackground(
+  triggerHandleId: string,
+  taskId: string
+): Promise<void> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // Reduced to 3s
+
+    const response = await fetch(
+      `${process.env.TRIGGER_API_URL}/api/v2/runs/${triggerHandleId}/cancel`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+      }
+    );
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      console.log(`✅ Cancelled reminder for deleted task ${taskId}`);
+    } else {
+      console.warn(
+        `⚠️ Failed to cancel reminder for task ${taskId}. Status: ${response.status}`
+      );
+    }
+  } catch (error: any) {
+    if (error.name === "AbortError") {
+      console.warn(`⏱️ Timeout cancelling reminder for task ${taskId}`);
+    } else {
+      console.warn(
+        `❌ Error cancelling reminder for task ${taskId}:`,
+        error.message
+      );
+    }
+  }
+}
 
 export async function DELETE(request: NextRequest) {
   try {
-    // 1. Validasi Input Body
+    // 1. Validate Input
     const body = await request.json();
     const validationResult = DeleteTaskSchema.safeParse(body);
 
     if (!validationResult.success) {
-      // Mengembalikan error validasi yang spesifik dari Zod
       return NextResponse.json(
         {
           error: "Invalid request payload",
@@ -29,9 +69,10 @@ export async function DELETE(request: NextRequest) {
 
     const { taskId } = validationResult.data;
 
-    // 2. Autentikasi Pengguna
-    // Menggunakan `createClient()` untuk mendapatkan session pengguna dari cookies request.
-    const supabase = await createClient(); // Asumsikan Anda memiliki 'lib/supabase/server.ts' seperti yang dijelaskan sebelumnya
+    // 2. Initialize authenticated Supabase client
+    const supabase = await createClient();
+
+    // 3. Get user session
     const {
       data: { user },
       error: authError,
@@ -42,107 +83,70 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 3. Ambil data task (termasuk user_id untuk otorisasi)
-    // Gunakan `supabase` client yang diautentikasi (bukan `supabaseAdmin`)
-    // agar Row-Level Security (RLS) pada tabel `tasks` dapat diterapkan.
+    // 4. Fetch task data (RLS akan otomatis handle authorization)
     const { data: task, error: fetchError } = await supabase
       .from("tasks")
-      .select("id, trigger_handle_id, title, user_id") // Pastikan Anda mengambil `user_id`
+      .select("id, trigger_handle_id, title")
       .eq("id", taskId)
       .single();
 
     if (fetchError || !task) {
-      console.error("Supabase fetch error:", fetchError);
-      // Penting: Jangan berikan detail error yang terlalu spesifik jika task tidak ditemukan.
-      // Mengembalikan 404 jika task tidak ada, atau jika user tidak punya akses (karena RLS).
+      console.error("Task fetch error:", fetchError);
       return NextResponse.json(
-        { error: "Task not found or you do not have permission to delete it." },
+        { error: "Task not found or access denied" },
         { status: 404 }
       );
     }
 
-    // 4. Otorisasi: Pastikan task ini milik pengguna yang diautentikasi.
-    // Ini adalah lapisan keamanan kedua setelah RLS.
-    if (task.user_id !== user.id) {
-      console.warn(
-        `User ${user.id} attempted to delete task ${taskId} belonging to user ${task.user_id}`
-      );
-      return NextResponse.json(
-        { error: "Forbidden: You do not have permission to delete this task." },
-        { status: 403 }
-      );
-    }
-
-    // 5. Batalkan pengingat jika ada, menggunakan `supabaseAdmin`
-    // SupabaseAdmin digunakan di sini karena pembatalan trigger mungkin memerlukan hak akses yang lebih tinggi
-    // atau melewati RLS untuk memastikan trigger dapat dibatalkan terlepas dari siapa pemilik task-nya,
-    // asalkan permintaan penghapusan task itu sendiri sudah terotorisasi.
-    let reminderCancelled = false;
-    if (task.trigger_handle_id) {
-      try {
-        const triggerCancelResponse = await fetch(
-          `${process.env.TRIGGER_API_URL}/api/v2/runs/${task.trigger_handle_id}/cancel`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
-              "Content-Type": "application/json",
-            },
-            // Timeout untuk request eksternal
-            signal: AbortSignal.timeout(5000), // 5 detik timeout
-          }
-        );
-
-        if (!triggerCancelResponse.ok) {
-          console.warn(
-            `Failed to cancel reminder for task ${taskId}. Status: ${triggerCancelResponse.status}, Message: ${await triggerCancelResponse.text()}`
-          );
-          // Log warning tapi tetap lanjutkan penghapusan task
-        } else {
-          console.log(`Cancelled reminder for deleted task ${taskId}`);
-          reminderCancelled = true;
-        }
-      } catch (cancelError: any) {
-        if (cancelError.name === "AbortError") {
-          console.warn(
-            `Timeout when trying to cancel reminder for task ${taskId}.`
-          );
-        } else {
-          console.warn(
-            `Failed to cancel reminder for task ${taskId}:`,
-            cancelError
-          );
-        }
-        // Lanjutkan dengan hapus task meskipun gagal cancel reminder
-      }
-    }
-
-    // 6. Hapus task dari database
-    // Gunakan kembali `supabase` client yang diautentikasi (mematuhi RLS).
-    // Ini mengharuskan Anda memiliki kebijakan RLS `DELETE` untuk user_id yang cocok.
+    // 5. Delete task dari database DULU (fast operation)
     const { error: deleteError } = await supabase
       .from("tasks")
       .delete()
       .eq("id", taskId);
 
     if (deleteError) {
-      console.error(`Failed to delete task ${taskId} from DB:`, deleteError);
-      throw deleteError; // Rethrow untuk ditangkap oleh catch global
+      console.error(`Failed to delete task ${taskId}:`, deleteError);
+      return NextResponse.json(
+        { error: "Failed to delete task from database" },
+        { status: 500 }
+      );
     }
 
+    // 6. Cancel reminder di background (non-blocking)
+    if (task.trigger_handle_id) {
+      // Fire and forget - tidak menunggu hasil
+      cancelReminderInBackground(task.trigger_handle_id, taskId).catch(
+        (error) => {
+          console.error(
+            `Background reminder cancellation failed for task ${taskId}:`,
+            error
+          );
+        }
+      );
+    }
+
+    // 7. Return success response immediately
     return NextResponse.json({
       success: true,
       message: "Task deleted successfully",
       taskId: taskId,
       title: task.title,
-      reminderCancelled: reminderCancelled, // Menggunakan status aktual
+      reminderCancellation: task.trigger_handle_id
+        ? "Processing in background"
+        : "No reminder to cancel",
     });
   } catch (error: any) {
-    console.error("Error deleting task:", error);
-    // Hindari mengekspos detail error sensitif ke klien
+    console.error("Delete task error:", error);
     return NextResponse.json(
-      { error: "Failed to delete task due to an internal server error." },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }
+}
+
+// --- Alternative: Jika mau ada endpoint untuk check reminder cancellation status ---
+export async function GET(request: NextRequest) {
+  // Optional: endpoint untuk check status background job
+  // Bisa implement dengan Redis/database tracking jika diperlukan
+  return NextResponse.json({ message: "Status endpoint not implemented" });
 }

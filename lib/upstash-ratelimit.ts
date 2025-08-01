@@ -14,7 +14,7 @@ const redis = new Redis({
 // Contoh: 5 permintaan per 10 detik per ID unik
 export const ratelimit = new Ratelimit({
   redis: redis,
-  limiter: Ratelimit.slidingWindow(10, "1 m"), // 5 requests per 10 seconds
+  limiter: Ratelimit.slidingWindow(15, "1 m"), // 15 requests per 1 minutes
   analytics: true, // Opsional: kirim metrik ke Upstash Console
   /**
    * Optional: A value in milliseconds that is added to the token lifetime

@@ -129,6 +129,8 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
   }, [tasks, debouncedSearchTerm, statusFilter]);
 
   // --- MODIFIED deleteTask function to call the new API route ---
+  // TaskTable.tsx - Updated deleteTask function
+
   const deleteTask = async (taskId: string) => {
     if (
       !confirm(
@@ -138,46 +140,52 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
       return;
     }
 
+    // Optimistic update - hapus dari UI dulu
+    const originalTasks = tasks;
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+
     try {
       const response = await fetch("/api/tasks/delete", {
-        // NEW API ENDPOINT
-        method: "DELETE", // HTTP DELETE method
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }), // Send taskId in the body
+        body: JSON.stringify({ taskId }),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        // Display specific error from backend if available
-        const errorMessage = result.error || "Failed to delete task on server.";
+        // Rollback optimistic update jika gagal
+        setTasks(originalTasks);
+
+        const errorMessage = result.error || "Failed to delete task";
         const detailErrors = result.details
           ? Object.values(result.details).flat().join(", ")
           : null;
+
         throw new Error(
           detailErrors ? `${errorMessage}: ${detailErrors}` : errorMessage
         );
       }
 
-      // Update UI after successful deletion
-      setTasks((prev) => prev.filter((task) => task.id !== taskId));
-
-      // Toast with reminder status info from the API response
-      const message = result.reminderCancelled
-        ? "Note and reminder deleted successfully."
-        : result.message || "Note deleted successfully."; // Use the message from API
+      // Success toast dengan info background processing
+      const message =
+        result.reminderCancellation === "Processing in background"
+          ? "Note deleted successfully. Reminder cancellation is processing in background."
+          : result.message || "Note deleted successfully";
 
       toast({
         title: "Success",
-        description: message,
+        description: "Note deleted successfully.",
       });
     } catch (error: any) {
       console.error("Delete error:", error);
+
+      // Jika optimistic update sudah dilakukan tapi API gagal,
+      // tasks sudah di-rollback di atas
+
       toast({
         title: "Error deleting note",
-        description:
-          error.message ||
-          "An unexpected error occurred while deleting the note.",
+        description: error.message || "An unexpected error occurred",
         variant: "destructive",
       });
     }

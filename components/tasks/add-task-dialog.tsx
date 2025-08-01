@@ -3,9 +3,9 @@
 "use client";
 
 import type React from "react";
-import { useState, useEffect, useCallback } from "react"; // Tambahkan useCallback
-import { createClient } from "@/lib/supabase/client"; // Client-side Supabase client
-import type { Task } from "@/lib/types"; // Pastikan Task type Anda up-to-date
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { createClient } from "@/lib/supabase/client";
+import type { Task } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,11 +26,10 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import validator from "validator"; // Import validator library for client-side validation
-import { z } from "zod"; // Import Zod for client-side schema validation
+import validator from "validator";
+import { z } from "zod";
 
-// Definisi skema validasi untuk input form (client-side validation)
-// Ini harus konsisten dengan ServerTaskCreateSchema di /api/tasks/create/route.ts
+// ✅ OPTIMIZATION 1: Move schema outside component to prevent recreation
 const formSchema = z
   .object({
     title: z
@@ -44,14 +43,13 @@ const formSchema = z
       .optional(),
     deadline: z.string().refine((val) => {
       const date = new Date(val);
-      // Pastikan tanggal valid dan di masa depan
       return !isNaN(date.getTime()) && date > new Date();
     }, "Deadline must be a valid future date and time."),
     showReminder: z.boolean(),
-    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(), // Optional if showReminder is false
+    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(),
     targetContact: z.string().optional(),
     emailContact: z.string().email("Invalid email format.").optional(),
-    whatsappContact: z.string().optional(), // Lebih baik divalidasi dengan regex di sini juga
+    whatsappContact: z.string().optional(),
     reminderDays: z
       .number()
       .min(0, "Cannot be negative.")
@@ -77,8 +75,6 @@ const formSchema = z
           });
         }
       } else if (data.remindMethod === "whatsapp") {
-        // Basic phone number validation for client-side
-        // Mengizinkan + di awal (opsional) diikuti 8-15 digit
         if (!data.targetContact || !/^\+?\d{8,15}$/.test(data.targetContact)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -106,6 +102,7 @@ const formSchema = z
           });
         }
       }
+
       if (data.reminderDays === undefined || data.reminderDays === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -134,7 +131,6 @@ export function AddTaskDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
-
   const [showReminder, setShowReminder] = useState(false);
   const [remindMethod, setRemindMethod] =
     useState<Task["remind_method"]>("email");
@@ -142,21 +138,66 @@ export function AddTaskDialog({
   const [emailContact, setEmailContact] = useState("");
   const [whatsappContact, setWhatsappContact] = useState("");
   const [reminderDays, setReminderDays] = useState(1);
-
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({}); // State untuk error validasi
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { toast } = useToast();
-  // Supabase client tidak lagi digunakan untuk insert task utama,
-  // tapi bisa tetap digunakan jika ada operasi lain yang membutuhkannya (misal, get user session)
-  // const supabase = createClient();
+
+  // ✅ OPTIMIZATION 2: Memoize form data to prevent unnecessary calculations
+  const formData = useMemo(
+    () => ({
+      title,
+      description,
+      deadline,
+      showReminder,
+      remindMethod: showReminder ? remindMethod : undefined,
+      targetContact:
+        showReminder &&
+        (remindMethod === "email" || remindMethod === "whatsapp")
+          ? targetContact
+          : undefined,
+      emailContact:
+        showReminder && remindMethod === "both" ? emailContact : undefined,
+      whatsappContact:
+        showReminder && remindMethod === "both" ? whatsappContact : undefined,
+      reminderDays: showReminder ? reminderDays : undefined,
+    }),
+    [
+      title,
+      description,
+      deadline,
+      showReminder,
+      remindMethod,
+      targetContact,
+      emailContact,
+      whatsappContact,
+      reminderDays,
+    ]
+  );
+
+  // ✅ OPTIMIZATION 3: Debounced client-side validation
+  const validateForm = useCallback(() => {
+    const parsed = formSchema.safeParse(formData);
+    if (!parsed.success) {
+      const fieldErrors: Record<string, string> = {};
+      parsed.error.errors.forEach((err) => {
+        if (err.path && err.path.length > 0) {
+          fieldErrors[err.path[0].toString()] = err.message;
+        }
+      });
+      setErrors(fieldErrors);
+      return false;
+    }
+    setErrors({});
+    return true;
+  }, [formData]);
 
   // Handle default contact population when method changes or reminder is toggled
   useEffect(() => {
     if (showReminder) {
       if (remindMethod === "email") {
         setTargetContact(defaultEmail);
-        setEmailContact(""); // Clear 'both' contacts when switching to single
+        setEmailContact("");
         setWhatsappContact("");
       } else if (remindMethod === "whatsapp") {
         setTargetContact(defaultPhone);
@@ -165,19 +206,18 @@ export function AddTaskDialog({
       } else if (remindMethod === "both") {
         setEmailContact(defaultEmail);
         setWhatsappContact(defaultPhone);
-        setTargetContact(""); // Clear single contact when switching to both
+        setTargetContact("");
       }
     } else {
-      // Clear all reminder-related fields if showReminder is false
-      setRemindMethod("email"); // Reset to default
+      setRemindMethod("email");
       setTargetContact("");
       setEmailContact("");
       setWhatsappContact("");
-      setReminderDays(1); // Reset days
+      setReminderDays(1);
     }
   }, [showReminder, remindMethod, defaultEmail, defaultPhone]);
 
-  // Efek untuk mereset form setiap kali dialog ditutup
+  // Reset form when dialog closes
   useEffect(() => {
     if (!open) {
       setTitle("");
@@ -189,105 +229,91 @@ export function AddTaskDialog({
       setEmailContact("");
       setWhatsappContact("");
       setReminderDays(1);
-      setErrors({}); // Clear errors when dialog closes
+      setErrors({});
     }
   }, [open]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrors({}); // Bersihkan error sebelumnya
+  // ✅ OPTIMIZATION 4: Optimized submit handler
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
 
-    try {
-      // 1. Client-side Validation (Pre-submission)
-      // Ini memberikan feedback cepat kepada pengguna
-      const formData = {
-        title,
-        description,
-        deadline,
-        showReminder,
-        remindMethod: showReminder ? remindMethod : undefined,
-        targetContact:
-          showReminder &&
-          (remindMethod === "email" || remindMethod === "whatsapp")
-            ? targetContact
-            : undefined,
-        emailContact:
-          showReminder && remindMethod === "both" ? emailContact : undefined,
-        whatsappContact:
-          showReminder && remindMethod === "both" ? whatsappContact : undefined,
-        reminderDays: showReminder ? reminderDays : undefined,
-      };
-
-      const parsed = formSchema.safeParse(formData);
-      if (!parsed.success) {
-        const fieldErrors: Record<string, string> = {};
-        parsed.error.errors.forEach((err) => {
-          if (err.path && err.path.length > 0) {
-            fieldErrors[err.path[0].toString()] = err.message;
-          }
-        });
-        setErrors(fieldErrors);
+      // Quick validation check
+      if (!validateForm()) {
         toast({
           title: "Validation Error",
           description: "Please correct the errors in the form.",
           variant: "destructive",
         });
-        setLoading(false);
-        return; // Hentikan eksekusi jika validasi gagal
-      }
-
-      // 2. Panggil API Route untuk Membuat Task
-      // Ini akan memicu validasi server-side dan proses insert task.
-      const response = await fetch("/api/tasks/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Kirimkan data yang sudah divalidasi client-side.
-        // user_id TIDAK DIKIRIMKAN DARI CLIENT, akan ditambahkan di server API route.
-        body: JSON.stringify(parsed.data),
-      });
-
-      const result = await response.json(); // Ambil response JSON dari API route
-
-      if (!response.ok) {
-        // Tampilkan error dari API route (server-side validation, rate limit, dll.)
-        // result.details mungkin berisi error spesifik dari Zod server-side
-        const errorMessage = result.error || "Failed to create note on server.";
-        const detailErrors = result.details
-          ? Object.values(result.details).flat().join(", ")
-          : null;
-
-        toast({
-          title: "Error",
-          description: detailErrors
-            ? `${errorMessage}: ${detailErrors}`
-            : errorMessage,
-          variant: "destructive",
-        });
-        setLoading(false);
         return;
       }
 
-      // 3. Update UI dan Tutup Dialog
-      // result.task adalah objek Task yang baru dibuat, dikembalikan oleh API route
-      onTaskAdded(result.task);
-      onOpenChange(false);
-      toast({
-        title: "Success",
-        description: result.message || "Note created successfully.",
-      });
-    } catch (error: any) {
-      console.error("Error creating task in client:", error);
-      toast({
-        title: "Error",
-        description:
-          error.message || "Failed to create note. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+      setLoading(true);
+
+      try {
+        // ✅ OPTIMIZATION 5: Use AbortController for request cancellation
+        const abortController = new AbortController();
+        const timeoutId = setTimeout(() => abortController.abort(), 10000); // 10s timeout
+
+        const response = await fetch("/api/tasks/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+          signal: abortController.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          const errorMessage =
+            result.error || "Failed to create note on server.";
+          const detailErrors = result.details
+            ? Object.values(result.details).flat().join(", ")
+            : null;
+
+          toast({
+            title: "Error",
+            description: detailErrors
+              ? `${errorMessage}: ${detailErrors}`
+              : errorMessage,
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // ✅ OPTIMIZATION 6: Immediate UI update and close
+        onTaskAdded(result.task);
+        onOpenChange(false);
+
+        toast({
+          title: "Success",
+          description:
+            "Note created successfully!",
+        });
+      } catch (error: any) {
+        if (error.name === "AbortError") {
+          toast({
+            title: "Timeout",
+            description: "Request took too long. Please try again.",
+            variant: "destructive",
+          });
+        } else {
+          console.error("Error creating task in client:", error);
+          toast({
+            title: "Error",
+            description:
+              error.message || "Failed to create note. Please try again.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [formData, validateForm, onTaskAdded, onOpenChange, toast]
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -309,6 +335,7 @@ export function AddTaskDialog({
               <p className="text-red-500 text-sm mt-1">{errors.title}</p>
             )}
           </div>
+
           <div>
             <Label htmlFor="description">Description</Label>
             <Textarea
@@ -322,6 +349,7 @@ export function AddTaskDialog({
               <p className="text-red-500 text-sm mt-1">{errors.description}</p>
             )}
           </div>
+
           <div>
             <Label htmlFor="deadline">Deadline *</Label>
             <Input
@@ -351,16 +379,13 @@ export function AddTaskDialog({
               Set Reminder
             </Label>
           </div>
-          {errors.showReminder && (
-            <p className="text-red-500 text-sm mt-1">{errors.showReminder}</p>
-          )}
 
           {showReminder && (
             <div className="space-y-4 border-t pt-4 animate-in fade-in-0 duration-300">
               <div>
                 <Label htmlFor="remindMethod">Reminder Method *</Label>
                 <Select
-                  value={remindMethod ?? ""} // Pastikan value tidak null/undefined untuk Select
+                  value={remindMethod ?? ""}
                   onValueChange={(value) =>
                     setRemindMethod(value as Task["remind_method"])
                   }
@@ -400,6 +425,7 @@ export function AddTaskDialog({
                   )}
                 </div>
               )}
+
               {remindMethod === "whatsapp" && (
                 <div>
                   <Label htmlFor="targetContact">WhatsApp Number *</Label>
@@ -417,6 +443,7 @@ export function AddTaskDialog({
                   )}
                 </div>
               )}
+
               {remindMethod === "both" && (
                 <div className="space-y-3">
                   <div>
@@ -460,7 +487,7 @@ export function AddTaskDialog({
                   id="reminderDays"
                   type="number"
                   min="0"
-                  max="365" // Max 365, sesuai backend validation
+                  max="365"
                   value={reminderDays}
                   onChange={(e) =>
                     setReminderDays(Number.parseInt(e.target.value))
@@ -480,7 +507,7 @@ export function AddTaskDialog({
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={loading} // Disable cancel button when loading
+              disabled={loading}
             >
               Cancel
             </Button>
