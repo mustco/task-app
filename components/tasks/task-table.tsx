@@ -1,18 +1,11 @@
-// app/components/TaskTable.tsx (UPDATED FOR DELETE API)
+// app/components/TaskTable.tsx (UPDATED VERSION)
 
 "use client";
 
-import {
-  useState,
-  useRef,
-  useEffect,
-  useMemo,
-  useDeferredValue,
-  useCallback,
-} from "react"; // Ensure useCallback is imported
+import { useState, useRef, useEffect, useMemo, useDeferredValue } from "react"; // Import useMemo, useDeferredValue
 import { useInView } from "react-intersection-observer";
-import { createClient } from "@/lib/supabase/client"; // For loading more tasks
-import type { Task, User } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
+import type { Task, User } from "@/lib/types"; // Pastikan Task interface Anda mencakup user_id
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -33,10 +26,25 @@ import {
   Pencil,
   Loader2,
 } from "lucide-react";
-import { AddTaskDialog } from "./add-task-dialog";
-import { EditTaskDialog } from "./edit-task-dialog";
+import { AddTaskDialog } from "./add-task-dialog"; // Pastikan komponen ini memanggil API route Anda
+import { EditTaskDialog } from "./edit-task-dialog"; // Pastikan komponen ini memanggil API route Anda
 
 const PAGE_SIZE = 20;
+
+// Update Task interface jika belum ada user_id
+// interface Task {
+//   id: string;
+//   user_id: string; // Tambahkan ini!
+//   title: string;
+//   description?: string;
+//   deadline: string;
+//   status: "pending" | "in_progress" | "completed" | "overdue";
+//   remind_method: "email" | "whatsapp" | "both" | null;
+//   target_contact?: string | null;
+//   reminder_days: number | null;
+//   created_at: string;
+//   trigger_handle_id?: string | null; // Tambahkan jika ada
+// }
 
 interface TaskTableProps {
   initialTasks: Task[];
@@ -45,8 +53,8 @@ interface TaskTableProps {
 
 export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
-  const [rawSearchTerm, setRawSearchTerm] = useState("");
-  const debouncedSearchTerm = useDeferredValue(rawSearchTerm);
+  const [rawSearchTerm, setRawSearchTerm] = useState(""); // Input mentah untuk debounce
+  const debouncedSearchTerm = useDeferredValue(rawSearchTerm); // Deferred value for search
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -62,7 +70,7 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
 
   const tableRef = useRef<HTMLTableElement>(null);
   const { toast } = useToast();
-  const supabase = createClient(); // Supabase client for client-side operations (like loadMoreTasks)
+  const supabase = createClient(); // Supabase client untuk client-side
 
   const loadMoreTasks = async () => {
     if (loadingMore || !hasMore) return;
@@ -74,20 +82,20 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
 
     const userId = userProfile?.id;
     if (!userId) {
-      toast({
-        title: "Error",
-        description: "User session not found. Please refresh.",
-      });
+      toast({ title: "Error", description: "User session not found." });
       setLoadingMore(false);
       return;
     }
 
+    // Mengambil data menggunakan client Supabase di sisi browser
+    // RLS di Supabase akan secara otomatis memfilter data berdasarkan user_id dari sesi user.
+    // Filter .eq("user_id", userId) adalah lapisan keamanan ekstra di client-side.
     const { data: newTasks, error } = await supabase
       .from("tasks")
       .select(
         "id, user_id, title, description, deadline, status, remind_method, target_contact, reminder_days"
       )
-      .eq("user_id", userId)
+      .eq("user_id", userId) // Ini penting untuk memastikan user hanya bisa query task miliknya
       .order("created_at", { ascending: false })
       .range(from, to);
 
@@ -98,11 +106,11 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
         description: "Failed to load more tasks.",
         variant: "destructive",
       });
-      setHasMore(false);
+      setHasMore(false); // Berhenti mencoba jika ada error
     } else if (newTasks) {
       setTasks((prev) => [...prev, ...newTasks]);
       setPage((prev) => prev + 1);
-      setHasMore(newTasks.length === PAGE_SIZE);
+      setHasMore(newTasks.length === PAGE_SIZE); // Update hasMore based on the exact PAGE_SIZE returned
     }
 
     setLoadingMore(false);
@@ -110,62 +118,57 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
 
   useEffect(() => {
     if (inView && hasMore && !loadingMore) {
+      // Pastikan hanya memuat jika masih ada dan tidak sedang memuat
       loadMoreTasks();
     }
-  }, [inView, hasMore, loadingMore, loadMoreTasks]); // Add loadMoreTasks to dependencies
+  }, [inView, hasMore, loadingMore]); // Sertakan hasMore dan loadingMore sebagai dependensi
 
-  // Memoize filteredTasks for performance
+  // Memoize filteredTasks untuk menghindari perhitungan ulang yang tidak perlu
   const filteredTasks = useMemo(() => {
-    const searchLower = debouncedSearchTerm.toLowerCase();
+    const searchLower = debouncedSearchTerm.toLowerCase(); // Gunakan debounced term
     return tasks.filter((task) => {
       const matchesSearch =
         task.title.toLowerCase().includes(searchLower) ||
         task.description?.toLowerCase().includes(searchLower) ||
-        task.target_contact?.toLowerCase().includes(searchLower);
+        task.target_contact?.toLowerCase().includes(searchLower); // Cek target_contact juga
       const matchesStatus =
         statusFilter === "all" || task.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
-  }, [tasks, debouncedSearchTerm, statusFilter]);
+  }, [tasks, debouncedSearchTerm, statusFilter]); // Dependensi
 
-  // --- MODIFIED deleteTask function to call the new API route ---
   const deleteTask = async (taskId: string) => {
     if (
       !confirm(
         "Are you sure you want to delete this note? This action cannot be undone."
       )
     ) {
+      // Pesan konfirmasi yang lebx`ih kuat
       return;
     }
 
     try {
-      const response = await fetch("/api/tasks/delete", {
-        // NEW API ENDPOINT
-        method: "DELETE", // HTTP DELETE method
+      const response = await fetch("/api/delete-task", {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }), // Send taskId in the body
+        body: JSON.stringify({ taskId }),
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        // Display specific error from backend if available
-        const errorMessage = result.error || "Failed to delete task on server.";
-        const detailErrors = result.details
-          ? Object.values(result.details).flat().join(", ")
-          : null;
-        throw new Error(
-          detailErrors ? `${errorMessage}: ${detailErrors}` : errorMessage
-        );
+        // Tampilkan error yang lebih spesifik dari backend jika ada
+        throw new Error(result.error || "Failed to delete task");
       }
 
-      // Update UI after successful deletion
       setTasks((prev) => prev.filter((task) => task.id !== taskId));
 
-      // Toast with reminder status info from the API response
+      // Toast dengan info reminder status
       const message = result.reminderCancelled
         ? "Note and reminder deleted successfully."
-        : result.message || "Note deleted successfully."; // Use the message from API
+        : result.cancelResult?.attempted && !result.reminderCancelled
+          ? "Note deleted, but reminder might still run (was too close to execution time)."
+          : "Note deleted successfully.";
 
       toast({
         title: "Success",
@@ -183,7 +186,6 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
     }
   };
 
-  // --- Helper functions for task updates/adds ---
   const handleTaskAdded = (newTask: Task) => {
     setTasks((prev) => [newTask, ...prev]);
   };
@@ -194,8 +196,7 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
     );
   };
 
-  // --- Badge formatting functions (memoized) ---
-  const getStatusBadge = useCallback((status: string) => {
+  const getStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
       pending: "bg-yellow-100 hover:bg-yellow-200 text-yellow-800",
       overdue: "bg-red-100 hover:bg-red-200 text-red-800",
@@ -205,13 +206,14 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
     const statusText = status.charAt(0).toUpperCase() + status.slice(1);
     return (
       <Badge className={colors[status] || "bg-gray-100 text-gray-800"}>
-        {statusText.replace(/_/g, " ")}
+        {statusText.replace(/_/g, " ")} {/* Ganti underscore dengan spasi */}
       </Badge>
     );
-  }, []); // No dependencies needed, purely formatting
+  };
 
-  const formatDeadline = useCallback((dateString: string) => {
+  const formatDeadline = (dateString: string) => {
     if (!dateString) return "-";
+    // Menggunakan Intl.DateTimeFormat untuk format yang lebih konsisten dan aman dari locale
     try {
       return new Intl.DateTimeFormat("id-ID", {
         day: "2-digit",
@@ -219,13 +221,13 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        hour12: false,
+        hour12: false, // Gunakan format 24 jam
       }).format(new Date(dateString));
     } catch (e) {
       console.error("Invalid date string:", dateString, e);
       return "Invalid Date";
     }
-  }, []); // No dependencies needed, purely formatting
+  };
 
   const columnMinWidths = {
     title: 150,
@@ -247,7 +249,7 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
             <Input
               className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400 pl-10"
               placeholder="Search notes..."
-              value={rawSearchTerm}
+              value={rawSearchTerm} // Tampilkan nilai mentah di input
               onChange={(e) => setRawSearchTerm(e.target.value)}
             />
           </div>
@@ -260,7 +262,8 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="in_progress">In Progress</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
-              {/* Overdue is typically system-calculated, not manually filtered */}
+              {/* Overdue tidak termasuk di filter karena statusnya dihitung dinamis,
+                  tapi bisa ditambahkan jika Anda punya cara untuk mengaturnya di DB */}
             </SelectContent>
           </Select>
         </div>
@@ -333,7 +336,8 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
                 // Handle null/undefined for target_contact gracefully
                 const [emailPart = "", phonePart = ""] = (
                   task.target_contact || ""
-                ).split("|");
+                ) // Pastikan ini string kosong jika null/undefined
+                  .split("|");
 
                 return (
                   <tr
@@ -356,13 +360,15 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
                       {task.remind_method || "-"}
                     </td>
                     <td className="p-3 align-top border-r">
-                      {task.reminder_days !== null &&
-                      task.reminder_days !== undefined &&
-                      task.reminder_days > 0
-                        ? `${task.reminder_days} ${task.reminder_days > 1 ? "days" : "day"} before`
-                        : task.remind_method
-                          ? "On the day"
-                          : "-"}
+                      {
+                        task.reminder_days !== null &&
+                        task.reminder_days !== undefined &&
+                        task.reminder_days > 0
+                          ? `${task.reminder_days} ${task.reminder_days > 1 ? "days" : "day"} before`
+                          : task.remind_method
+                            ? "On the day"
+                            : "-" // Tampilkan "On the day" hanya jika ada remind_method
+                      }
                     </td>
                     <td className="p-3 align-top border-r">
                       <div className="flex flex-col gap-1">
@@ -438,14 +444,14 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
           </tbody>
         </table>
 
-        {/* --- Load More Trigger --- */}
-        {hasMore && (
+        {/* --- Bagian baru untuk pemicu dan loading --- */}
+        {hasMore && ( // Hanya tampilkan pemicu loadMore jika ada kemungkinan data selanjutnya
           <div ref={ref} className="h-10 flex justify-center items-center">
             {loadingMore && <Loader2 className="animate-spin text-gray-500" />}
           </div>
         )}
 
-        {/* --- Empty States / No Results --- */}
+        {/* Pesan jika tidak ada task sama sekali atau setelah filter */}
         {tasks.length === 0 && !loadingMore && filteredTasks.length === 0 && (
           <div className="text-center py-12 text-gray-500">
             <p className="font-semibold">No Notes Found</p>

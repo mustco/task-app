@@ -1,9 +1,9 @@
-// app/components/tasks/add-task-dialog.tsx
+// app/components/tasks/add-task-dialog.tsx (SECURE & OPTIMIZED VERSION)
 
 "use client";
 
 import type React from "react";
-import { useState, useEffect, useCallback } from "react"; // Tambahkan useCallback
+import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client"; // Client-side Supabase client
 import type { Task } from "@/lib/types"; // Pastikan Task type Anda up-to-date
 import { Button } from "@/components/ui/button";
@@ -27,10 +27,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import validator from "validator"; // Import validator library for client-side validation
-import { z } from "zod"; // Import Zod for client-side schema validation
+import { z } from "zod"; // Import Zod for client-side schema validation (optional, but good practice)
 
 // Definisi skema validasi untuk input form (client-side validation)
-// Ini harus konsisten dengan ServerTaskCreateSchema di /api/tasks/create/route.ts
+// Ini akan mencerminkan validasi yang lebih ketat di API route Anda
 const formSchema = z
   .object({
     title: z
@@ -78,8 +78,8 @@ const formSchema = z
         }
       } else if (data.remindMethod === "whatsapp") {
         // Basic phone number validation for client-side
-        // Mengizinkan + di awal (opsional) diikuti 8-15 digit
         if (!data.targetContact || !/^\+?\d{8,15}$/.test(data.targetContact)) {
+          // Memungkinkan + di awal
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message:
@@ -138,7 +138,9 @@ export function AddTaskDialog({
   const [showReminder, setShowReminder] = useState(false);
   const [remindMethod, setRemindMethod] =
     useState<Task["remind_method"]>("email");
+  // targetContact hanya digunakan untuk single email/whatsapp
   const [targetContact, setTargetContact] = useState("");
+  // emailContact dan whatsappContact digunakan untuk mode "both"
   const [emailContact, setEmailContact] = useState("");
   const [whatsappContact, setWhatsappContact] = useState("");
   const [reminderDays, setReminderDays] = useState(1);
@@ -147,9 +149,7 @@ export function AddTaskDialog({
   const [errors, setErrors] = useState<Record<string, string>>({}); // State untuk error validasi
 
   const { toast } = useToast();
-  // Supabase client tidak lagi digunakan untuk insert task utama,
-  // tapi bisa tetap digunakan jika ada operasi lain yang membutuhkannya (misal, get user session)
-  // const supabase = createClient();
+  const supabase = createClient();
 
   // Handle default contact population when method changes or reminder is toggled
   useEffect(() => {
@@ -200,7 +200,6 @@ export function AddTaskDialog({
 
     try {
       // 1. Client-side Validation (Pre-submission)
-      // Ini memberikan feedback cepat kepada pengguna
       const formData = {
         title,
         description,
@@ -237,47 +236,75 @@ export function AddTaskDialog({
         return; // Hentikan eksekusi jika validasi gagal
       }
 
-      // 2. Panggil API Route untuk Membuat Task
-      // Ini akan memicu validasi server-side dan proses insert task.
-      const response = await fetch("/api/tasks/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Kirimkan data yang sudah divalidasi client-side.
-        // user_id TIDAK DIKIRIMKAN DARI CLIENT, akan ditambahkan di server API route.
-        body: JSON.stringify(parsed.data),
-      });
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user)
+        throw new Error("User not authenticated. Please log in again.");
 
-      const result = await response.json(); // Ambil response JSON dari API route
+      // Siapkan payload untuk Supabase insert
+      type TaskPayload = Omit<
+        Task,
+        "id" | "created_at" | "user" | "trigger_handle_id"
+      >; // Exclude trigger_handle_id
+      const taskPayload: TaskPayload = {
+        user_id: user.id,
+        title: parsed.data.title,
+        description: parsed.data.description || null,
+        deadline: new Date(parsed.data.deadline).toISOString(),
+        status: "pending",
+        remind_method: null,
+        target_contact: null,
+        reminder_days: null,
+      };
 
-      if (!response.ok) {
-        // Tampilkan error dari API route (server-side validation, rate limit, dll.)
-        // result.details mungkin berisi error spesifik dari Zod server-side
-        const errorMessage = result.error || "Failed to create note on server.";
-        const detailErrors = result.details
-          ? Object.values(result.details).flat().join(", ")
-          : null;
+      if (parsed.data.showReminder) {
+        let finalTargetContact = "";
+        if (parsed.data.remindMethod === "email") {
+          finalTargetContact = parsed.data.targetContact!;
+        } else if (parsed.data.remindMethod === "whatsapp") {
+          finalTargetContact = parsed.data.targetContact!;
+        } else if (parsed.data.remindMethod === "both") {
+          finalTargetContact = `${parsed.data.emailContact}|${parsed.data.whatsappContact}`;
+        }
+        taskPayload.remind_method = parsed.data.remindMethod!;
+        taskPayload.target_contact = finalTargetContact;
+        taskPayload.reminder_days = parsed.data.reminderDays!;
+      }
 
-        toast({
-          title: "Error",
-          description: detailErrors
-            ? `${errorMessage}: ${detailErrors}`
-            : errorMessage,
-          variant: "destructive",
+      // Insert ke Supabase
+      const { data, error: supabaseError } = await supabase
+        .from("tasks")
+        .insert(taskPayload)
+        .select()
+        .single();
+
+      if (supabaseError) throw supabaseError;
+
+      // 2. Schedule Reminder di Background (Non-blocking)
+      // Gunakan hasReminder dari parsed.data
+      if (parsed.data.showReminder) {
+        fetch("/api/schedule-reminder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskId: data.id }),
+        }).catch((err) => {
+          console.error("Background reminder scheduling failed:", err);
+          // Toast opsional untuk user jika reminder gagal dijadwalkan secara background
+          // toast({
+          //   title: "Warning",
+          //   description: "Note created, but reminder scheduling failed. Please try editing the note to reschedule.",
+          //   variant: "destructive",
+          // });
         });
-        setLoading(false);
-        return;
       }
 
       // 3. Update UI dan Tutup Dialog
-      // result.task adalah objek Task yang baru dibuat, dikembalikan oleh API route
-      onTaskAdded(result.task);
+      onTaskAdded(data); // Pastikan `data` memiliki semua properti `Task` yang diperlukan, termasuk ID dan user_id.
       onOpenChange(false);
-      toast({
-        title: "Success",
-        description: result.message || "Note created successfully.",
-      });
+      toast({ title: "Success", description: "Note created successfully." });
     } catch (error: any) {
-      console.error("Error creating task in client:", error);
+      console.error("Error creating task:", error);
       toast({
         title: "Error",
         description:

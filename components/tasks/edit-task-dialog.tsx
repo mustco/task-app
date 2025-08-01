@@ -1,11 +1,11 @@
-// app/components/tasks/edit-task-dialog.tsx (UPDATED TO USE /api/tasks/update)
+// app/components/tasks/edit-task-dialog.tsx (SECURE & OPTIMIZED VERSION)
 
 "use client";
 
 import type React from "react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react"; // Tambahkan useCallback
 import { createClient } from "@/lib/supabase/client";
-import type { Task } from "@/lib/types";
+import type { Task } from "@/lib/types"; // Pastikan Task type Anda up-to-date
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,10 +26,11 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import validator from "validator";
-import { z } from "zod";
+import validator from "validator"; // Import validator for client-side validation
+import { z } from "zod"; // Import Zod for client-side schema validation
 
-// Client-side validation schema
+// Definisi skema validasi untuk input form (client-side validation)
+// Ini harus mencerminkan validasi yang lebih ketat di API route Anda
 const formSchema = z
   .object({
     title: z
@@ -43,14 +44,15 @@ const formSchema = z
       .optional(),
     deadline: z.string().refine((val) => {
       const date = new Date(val);
+      // Pastikan tanggal valid dan di masa depan
       return !isNaN(date.getTime()) && date > new Date();
     }, "Deadline must be a valid future date and time."),
-    status: z.enum(["pending", "in_progress", "completed", "overdue"]),
+    status: z.enum(["pending", "in_progress", "completed", "overdue"]), // Termasuk 'overdue' untuk completeness
     showReminder: z.boolean(),
-    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(),
+    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(), // Optional jika showReminder false
     targetContact: z.string().optional(),
     emailContact: z.string().email("Invalid email format.").optional(),
-    whatsappContact: z.string().optional(),
+    whatsappContact: z.string().optional(), // Lebih baik divalidasi dengan regex di sini juga
     reminderDays: z
       .number()
       .min(0, "Cannot be negative.")
@@ -76,7 +78,9 @@ const formSchema = z
           });
         }
       } else if (data.remindMethod === "whatsapp") {
+        // Basic phone number validation for client-side
         if (!data.targetContact || !/^\+?\d{8,15}$/.test(data.targetContact)) {
+          // Memungkinkan + di awal
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message:
@@ -139,75 +143,134 @@ export function EditTaskDialog({
   const [whatsappContact, setWhatsappContact] = useState("");
   const [reminderDays, setReminderDays] = useState(1);
 
+  const [originalReminder, setOriginalReminder] = useState<{
+    hasReminder: boolean;
+    method: Task["remind_method"];
+    contact: string;
+    days: number;
+    deadline: string;
+  } | null>(null);
+
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({}); // State untuk error validasi
 
   const { toast } = useToast();
-  const supabase = createClient();
+  const supabase = createClient(); // Client-side Supabase client
 
-  // useEffect to populate form when dialog opens or taskToEdit changes
+  // useEffect untuk mengisi form saat dialog dibuka atau taskToEdit berubah
   useEffect(() => {
     if (taskToEdit) {
       setTitle(taskToEdit.title);
       setDescription(taskToEdit.description || "");
       setStatus(taskToEdit.status);
 
-      // Format deadline to datetime-local string
+      // Format deadline ke datetime-local string (ISO string slice)
+      // Pastikan timezone offset ditangani dengan benar untuk tampilan lokal
       if (taskToEdit.deadline) {
         const date = new Date(taskToEdit.deadline);
-        const offset = date.getTimezoneOffset() * 60000;
+        // Menggunakan offsetToISOString untuk mengatasi masalah timezone pada input datetime-local
+        // https://stackoverflow.com/questions/42364003/how-to-bind-datetime-local-to-an-iso-8601-string-in-react
+        const offset = date.getTimezoneOffset() * 60000; // offset in milliseconds
         const localDeadline = new Date(date.getTime() - offset)
           .toISOString()
           .slice(0, 16);
         setDeadline(localDeadline);
       } else {
-        setDeadline("");
+        setDeadline(""); // Reset if no deadline
       }
 
       const hasOriginalReminder = !!taskToEdit.remind_method;
       const originalContact = taskToEdit.target_contact || "";
-      const originalDays = taskToEdit.reminder_days ?? 1;
+      const originalDays = taskToEdit.reminder_days ?? 1; // Default ke 1 jika null/undefined
+      const originalDeadlineIso = taskToEdit.deadline
+        ? new Date(taskToEdit.deadline).toISOString()
+        : "";
+
+      setOriginalReminder({
+        hasReminder: hasOriginalReminder,
+        method: taskToEdit.remind_method, // Bisa null
+        contact: originalContact,
+        days: originalDays,
+        deadline: originalDeadlineIso,
+      });
 
       if (hasOriginalReminder) {
         setShowReminder(true);
-        setRemindMethod(taskToEdit.remind_method!);
+        setRemindMethod(taskToEdit.remind_method!); // Assert not null
         setReminderDays(originalDays);
 
         if (taskToEdit.remind_method === "both") {
           const [email = "", phone = ""] = originalContact.split("|");
           setEmailContact(email);
           setWhatsappContact(phone);
-          setTargetContact("");
+          setTargetContact(""); // Clear single contact state
         } else {
           setTargetContact(originalContact);
-          setEmailContact("");
+          setEmailContact(""); // Clear both contacts state
           setWhatsappContact("");
         }
       } else {
         setShowReminder(false);
+        // Reset state reminder ke default saat tidak ada reminder
         setRemindMethod("email");
         setReminderDays(1);
         setTargetContact("");
         setEmailContact("");
         setWhatsappContact("");
       }
-      setErrors({});
+      setErrors({}); // Clear errors when taskToEdit changes
     }
   }, [taskToEdit]);
 
+  // Fungsi untuk mengecek apakah reminder berubah
+  // Menggunakan useCallback untuk memoize fungsi ini
+  const isReminderChanged = useCallback(() => {
+    if (!originalReminder) return false;
+
+    // Normalisasi current contact untuk perbandingan
+    let currentContact = "";
+    if (showReminder) {
+      if (remindMethod === "email" || remindMethod === "whatsapp") {
+        currentContact = targetContact.trim();
+      } else if (remindMethod === "both") {
+        currentContact = `${emailContact.trim()}|${whatsappContact.trim()}`;
+      }
+    }
+
+    // Normalisasi deadline untuk perbandingan
+    const currentDeadlineIso = deadline ? new Date(deadline).toISOString() : "";
+
+    return (
+      originalReminder.hasReminder !== showReminder ||
+      originalReminder.method !== remindMethod ||
+      originalReminder.contact !== currentContact ||
+      originalReminder.days !== reminderDays ||
+      originalReminder.deadline !== currentDeadlineIso
+    );
+  }, [
+    originalReminder,
+    showReminder,
+    remindMethod,
+    targetContact,
+    emailContact,
+    whatsappContact,
+    reminderDays,
+    deadline,
+  ]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!taskToEdit) return;
+    if (!taskToEdit) return; // Jangan lanjutkan jika tidak ada task yang diedit
     setLoading(true);
-    setErrors({});
+    setErrors({}); // Bersihkan error sebelumnya
 
     try {
-      // Client-side validation
+      // 1. Client-side Validation (Pre-submission)
       const formData = {
         title,
         description,
         deadline,
-        status,
+        status, // Tambahkan status ke formData untuk validasi
         showReminder,
         remindMethod: showReminder ? remindMethod : undefined,
         targetContact:
@@ -237,46 +300,88 @@ export function EditTaskDialog({
           variant: "destructive",
         });
         setLoading(false);
-        return;
+        return; // Hentikan eksekusi jika validasi gagal
       }
 
-      // Prepare payload for API
-      const apiPayload = {
-        taskId: taskToEdit.id,
+      // Pastikan user terautentikasi sebelum update
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error("User not authenticated. Please log in again.");
+      }
+
+      // Payload untuk update ke Supabase
+      type TaskUpdatePayload = Omit<
+  Task,
+  "id" | "created_at" | "user_id" | "user" | "trigger_handle_id"
+> & {
+  status: "pending" | "in_progress" | "completed" | "overdue" | undefined;
+};
+      const updates: Partial<TaskUpdatePayload> = {
         title: parsed.data.title,
         description: parsed.data.description || null,
         deadline: new Date(parsed.data.deadline).toISOString(),
         status: parsed.data.status,
-        showReminder: parsed.data.showReminder,
-        remindMethod: parsed.data.remindMethod,
-        targetContact: parsed.data.targetContact,
-        emailContact: parsed.data.emailContact,
-        whatsappContact: parsed.data.whatsappContact,
-        reminderDays: parsed.data.reminderDays,
       };
 
-      // Call the unified update API
-      const response = await fetch("/api/tasks/update", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(apiPayload),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to update task");
+      // Set reminder fields based on showReminder state
+      if (parsed.data.showReminder) {
+        let finalTargetContact = "";
+        if (parsed.data.remindMethod === "email") {
+          finalTargetContact = parsed.data.targetContact!;
+        } else if (parsed.data.remindMethod === "whatsapp") {
+          finalTargetContact = parsed.data.targetContact!;
+        } else if (parsed.data.remindMethod === "both") {
+          finalTargetContact = `${parsed.data.emailContact}|${parsed.data.whatsappContact}`;
+        }
+        updates.remind_method = parsed.data.remindMethod!;
+        updates.target_contact = finalTargetContact;
+        updates.reminder_days = parsed.data.reminderDays!;
+      } else {
+        // Jika showReminder false, pastikan field reminder di DB di-null-kan
+        updates.remind_method = null;
+        updates.target_contact = null;
+        updates.reminder_days = null;
       }
 
-      // Update UI and close dialog
-      onTaskUpdated(result.task);
+      // Update task di database
+      // Ini akan tunduk pada RLS
+      const { data, error: supabaseError } = await supabase
+        .from("tasks")
+        .update(updates)
+        .eq("id", taskToEdit.id)
+        .eq("user_id", user.id) // Pastikan hanya user pemilik yang bisa update
+        .select()
+        .single();
+
+      if (supabaseError) throw supabaseError;
+
+      // 2. Handle perubahan reminder (panggil API reschedule-reminder di background)
+      if (isReminderChanged()) {
+        // Gunakan fungsi isReminderChanged()
+        fetch("/api/reschedule-reminder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            taskId: taskToEdit.id,
+            hasReminder: parsed.data.showReminder, // Kirim status reminder yang baru
+          }),
+        }).catch((err) => {
+          console.error("Background reminder rescheduling failed:", err);
+          // Toast opsional untuk user jika reminder gagal dijadwalkan secara background
+          // toast({
+          //   title: "Warning",
+          //   description: "Note updated, but reminder might not have been updated successfully.",
+          //   variant: "destructive",
+          // });
+        });
+      }
+
+      // 3. Update UI dan Tutup Dialog
+      onTaskUpdated(data); // Pastikan `data` memiliki semua properti `Task` yang diperlukan
       onOpenChange(false);
-      toast({
-        title: "Success",
-        description: result.message || "Note updated successfully.",
-      });
+      toast({ title: "Success", description: "Note updated successfully." });
     } catch (error: any) {
       console.error("Error updating task:", error);
       toast({
@@ -336,7 +441,8 @@ export function EditTaskDialog({
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="in_progress">In Progress</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="overdue">Overdue</SelectItem>
+                <SelectItem value="overdue">Overdue</SelectItem>{" "}
+                {/* Tambahkan overdue jika status ini bisa di-set manual */}
               </SelectContent>
             </Select>
             {errors.status && (
@@ -483,7 +589,7 @@ export function EditTaskDialog({
                   id="reminderDays"
                   type="number"
                   min="0"
-                  max="365"
+                  max="365" // Max 365, sesuai backend validation
                   value={reminderDays}
                   onChange={(e) => setReminderDays(Number(e.target.value))}
                 />
@@ -501,7 +607,7 @@ export function EditTaskDialog({
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={loading}
+              disabled={loading} // Disable cancel button when loading
             >
               Cancel
             </Button>
