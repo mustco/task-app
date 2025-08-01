@@ -516,7 +516,7 @@ export function AddTaskDialog({
               {loading ? "Creating..." : "Create Note"}
             </Button>
           </div>
-        </form>
+        </form> 
       </DialogContent>
     </Dialog>
   );
