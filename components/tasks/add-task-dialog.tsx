@@ -1,11 +1,11 @@
-// app/components/tasks/add-task-dialog.tsx (SECURE & OPTIMIZED VERSION)
+// app/components/tasks/add-task-dialog.tsx (FINAL - HANYA LOGIKA KONTAK YANG DIUBAH)
 
 "use client";
 
 import type React from "react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client"; // Client-side Supabase client
-import type { Task } from "@/lib/types"; // Pastikan Task type Anda up-to-date
+import { createClient } from "@/lib/supabase/client";
+import type { Task } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,11 +26,9 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import validator from "validator"; // Import validator library for client-side validation
-import { z } from "zod"; // Import Zod for client-side schema validation (optional, but good practice)
+import { z } from "zod";
 
-// Definisi skema validasi untuk input form (client-side validation)
-// Ini akan mencerminkan validasi yang lebih ketat di API route Anda
+// ✅ PERUBAHAN 1: Skema Zod disesuaikan dengan target_email dan target_phone
 const formSchema = z
   .object({
     title: z
@@ -44,14 +42,13 @@ const formSchema = z
       .optional(),
     deadline: z.string().refine((val) => {
       const date = new Date(val);
-      // Pastikan tanggal valid dan di masa depan
       return !isNaN(date.getTime()) && date > new Date();
     }, "Deadline must be a valid future date and time."),
     showReminder: z.boolean(),
-    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(), // Optional if showReminder is false
-    targetContact: z.string().optional(),
-    emailContact: z.string().email("Invalid email format.").optional(),
-    whatsappContact: z.string().optional(), // Lebih baik divalidasi dengan regex di sini juga
+    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(),
+    // Kolom baru untuk validasi
+    target_email: z.string().email("Invalid email format.").optional(),
+    target_phone: z.string().optional(),
     reminderDays: z
       .number()
       .min(0, "Cannot be negative.")
@@ -63,53 +60,35 @@ const formSchema = z
       if (!data.remindMethod) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Reminder method is required when reminder is enabled.",
+          message: "Reminder method is required.",
           path: ["remindMethod"],
         });
       }
 
-      if (data.remindMethod === "email") {
-        if (!data.targetContact || !validator.isEmail(data.targetContact)) {
+      if (data.remindMethod === "email" || data.remindMethod === "both") {
+        if (!data.target_email) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "Valid email address is required.",
-            path: ["targetContact"],
-          });
-        }
-      } else if (data.remindMethod === "whatsapp") {
-        // Basic phone number validation for client-side
-        if (!data.targetContact || !/^\+?\d{8,15}$/.test(data.targetContact)) {
-          // Memungkinkan + di awal
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message:
-              "Valid WhatsApp number (8-15 digits, optional +) is required.",
-            path: ["targetContact"],
-          });
-        }
-      } else if (data.remindMethod === "both") {
-        if (!data.emailContact || !validator.isEmail(data.emailContact)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "Valid email address is required for both methods.",
-            path: ["emailContact"],
-          });
-        }
-        if (
-          !data.whatsappContact ||
-          !/^\+?\d{8,15}$/.test(data.whatsappContact)
-        ) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "Valid WhatsApp number is required for both methods.",
-            path: ["whatsappContact"],
+            message: "A valid email is required.",
+            path: ["target_email"], // Path error disesuaikan
           });
         }
       }
+
+      if (data.remindMethod === "whatsapp" || data.remindMethod === "both") {
+        if (!data.target_phone || !/^\+?\d{8,15}$/.test(data.target_phone)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "A valid WhatsApp number is required.",
+            path: ["target_phone"], // Path error disesuaikan
+          });
+        }
+      }
+
       if (data.reminderDays === undefined || data.reminderDays === null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Reminder days are required when reminder is enabled.",
+          message: "Reminder days are required.",
           path: ["reminderDays"],
         });
       }
@@ -131,32 +110,29 @@ export function AddTaskDialog({
   defaultEmail,
   defaultPhone,
 }: AddTaskDialogProps) {
+  // State management TIDAK DIUBAH untuk menjaga struktur form
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
-
   const [showReminder, setShowReminder] = useState(false);
   const [remindMethod, setRemindMethod] =
     useState<Task["remind_method"]>("email");
-  // targetContact hanya digunakan untuk single email/whatsapp
-  const [targetContact, setTargetContact] = useState("");
-  // emailContact dan whatsappContact digunakan untuk mode "both"
-  const [emailContact, setEmailContact] = useState("");
-  const [whatsappContact, setWhatsappContact] = useState("");
+  const [targetContact, setTargetContact] = useState(""); // Untuk input tunggal
+  const [emailContact, setEmailContact] = useState(""); // Untuk input 'both'
+  const [whatsappContact, setWhatsappContact] = useState(""); // Untuk input 'both'
   const [reminderDays, setReminderDays] = useState(1);
-
   const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<Record<string, string>>({}); // State untuk error validasi
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { toast } = useToast();
   const supabase = createClient();
 
-  // Handle default contact population when method changes or reminder is toggled
+  // useEffect TIDAK DIUBAH
   useEffect(() => {
     if (showReminder) {
       if (remindMethod === "email") {
         setTargetContact(defaultEmail);
-        setEmailContact(""); // Clear 'both' contacts when switching to single
+        setEmailContact("");
         setWhatsappContact("");
       } else if (remindMethod === "whatsapp") {
         setTargetContact(defaultPhone);
@@ -165,19 +141,17 @@ export function AddTaskDialog({
       } else if (remindMethod === "both") {
         setEmailContact(defaultEmail);
         setWhatsappContact(defaultPhone);
-        setTargetContact(""); // Clear single contact when switching to both
+        setTargetContact("");
       }
     } else {
-      // Clear all reminder-related fields if showReminder is false
-      setRemindMethod("email"); // Reset to default
+      setRemindMethod("email");
       setTargetContact("");
       setEmailContact("");
       setWhatsappContact("");
-      setReminderDays(1); // Reset days
+      setReminderDays(1);
     }
   }, [showReminder, remindMethod, defaultEmail, defaultPhone]);
 
-  // Efek untuk mereset form setiap kali dialog ditutup
   useEffect(() => {
     if (!open) {
       setTitle("");
@@ -189,41 +163,58 @@ export function AddTaskDialog({
       setEmailContact("");
       setWhatsappContact("");
       setReminderDays(1);
-      setErrors({}); // Clear errors when dialog closes
+      setErrors({});
     }
   }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setErrors({}); // Bersihkan error sebelumnya
+    setErrors({});
 
     try {
-      // 1. Client-side Validation (Pre-submission)
-      const formData = {
+      // ✅ PERUBAHAN 2: Menyiapkan data untuk Zod sesuai skema baru
+      const dataToValidate = {
         title,
         description,
         deadline,
         showReminder,
         remindMethod: showReminder ? remindMethod : undefined,
-        targetContact:
-          showReminder &&
-          (remindMethod === "email" || remindMethod === "whatsapp")
-            ? targetContact
-            : undefined,
-        emailContact:
-          showReminder && remindMethod === "both" ? emailContact : undefined,
-        whatsappContact:
-          showReminder && remindMethod === "both" ? whatsappContact : undefined,
         reminderDays: showReminder ? reminderDays : undefined,
+        target_email: showReminder
+          ? remindMethod === "email"
+            ? targetContact
+            : remindMethod === "both"
+              ? emailContact
+              : undefined
+          : undefined,
+        target_phone: showReminder
+          ? remindMethod === "whatsapp"
+            ? targetContact
+            : remindMethod === "both"
+              ? whatsappContact
+              : undefined
+          : undefined,
       };
 
-      const parsed = formSchema.safeParse(formData);
+      const parsed = formSchema.safeParse(dataToValidate);
       if (!parsed.success) {
         const fieldErrors: Record<string, string> = {};
         parsed.error.errors.forEach((err) => {
           if (err.path && err.path.length > 0) {
-            fieldErrors[err.path[0].toString()] = err.message;
+            // Menyesuaikan path error kembali ke nama input form
+            const path = err.path[0].toString();
+            if (path === "target_email") {
+              fieldErrors[
+                remindMethod === "both" ? "emailContact" : "targetContact"
+              ] = err.message;
+            } else if (path === "target_phone") {
+              fieldErrors[
+                remindMethod === "both" ? "whatsappContact" : "targetContact"
+              ] = err.message;
+            } else {
+              fieldErrors[path] = err.message;
+            }
           }
         });
         setErrors(fieldErrors);
@@ -233,7 +224,7 @@ export function AddTaskDialog({
           variant: "destructive",
         });
         setLoading(false);
-        return; // Hentikan eksekusi jika validasi gagal
+        return;
       }
 
       const {
@@ -242,37 +233,27 @@ export function AddTaskDialog({
       if (!user)
         throw new Error("User not authenticated. Please log in again.");
 
-      // Siapkan payload untuk Supabase insert
-      type TaskPayload = Omit<
-        Task,
-        "id" | "created_at" | "user" | "trigger_handle_id"
-      >; // Exclude trigger_handle_id
-      const taskPayload: TaskPayload = {
+      // ✅ PERUBAHAN 3: Menyiapkan payload untuk database dengan kolom baru
+      const taskPayload = {
         user_id: user.id,
         title: parsed.data.title,
         description: parsed.data.description || null,
         deadline: new Date(parsed.data.deadline).toISOString(),
-        status: "pending",
-        remind_method: null,
-        target_contact: null,
-        reminder_days: null,
+        status: "pending" as const,
+        remind_method: parsed.data.showReminder
+          ? parsed.data.remindMethod!
+          : null,
+        reminder_days: parsed.data.showReminder
+          ? parsed.data.reminderDays!
+          : null,
+        target_email: parsed.data.showReminder
+          ? parsed.data.target_email || null
+          : null,
+        target_phone: parsed.data.showReminder
+          ? parsed.data.target_phone || null
+          : null,
       };
 
-      if (parsed.data.showReminder) {
-        let finalTargetContact = "";
-        if (parsed.data.remindMethod === "email") {
-          finalTargetContact = parsed.data.targetContact!;
-        } else if (parsed.data.remindMethod === "whatsapp") {
-          finalTargetContact = parsed.data.targetContact!;
-        } else if (parsed.data.remindMethod === "both") {
-          finalTargetContact = `${parsed.data.emailContact}|${parsed.data.whatsappContact}`;
-        }
-        taskPayload.remind_method = parsed.data.remindMethod!;
-        taskPayload.target_contact = finalTargetContact;
-        taskPayload.reminder_days = parsed.data.reminderDays!;
-      }
-
-      // Insert ke Supabase
       const { data, error: supabaseError } = await supabase
         .from("tasks")
         .insert(taskPayload)
@@ -281,8 +262,6 @@ export function AddTaskDialog({
 
       if (supabaseError) throw supabaseError;
 
-      // 2. Schedule Reminder di Background (Non-blocking)
-      // Gunakan hasReminder dari parsed.data
       if (parsed.data.showReminder) {
         fetch("/api/schedule-reminder", {
           method: "POST",
@@ -290,17 +269,10 @@ export function AddTaskDialog({
           body: JSON.stringify({ taskId: data.id }),
         }).catch((err) => {
           console.error("Background reminder scheduling failed:", err);
-          // Toast opsional untuk user jika reminder gagal dijadwalkan secara background
-          // toast({
-          //   title: "Warning",
-          //   description: "Note created, but reminder scheduling failed. Please try editing the note to reschedule.",
-          //   variant: "destructive",
-          // });
         });
       }
 
-      // 3. Update UI dan Tutup Dialog
-      onTaskAdded(data); // Pastikan `data` memiliki semua properti `Task` yang diperlukan, termasuk ID dan user_id.
+      onTaskAdded(data);
       onOpenChange(false);
       toast({ title: "Success", description: "Note created successfully." });
     } catch (error: any) {
@@ -316,6 +288,7 @@ export function AddTaskDialog({
     }
   };
 
+  // Bagian return (JSX) TIDAK ADA PERUBAHAN SAMA SEKALI
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
@@ -387,7 +360,7 @@ export function AddTaskDialog({
               <div>
                 <Label htmlFor="remindMethod">Reminder Method *</Label>
                 <Select
-                  value={remindMethod ?? ""} // Pastikan value tidak null/undefined untuk Select
+                  value={remindMethod ?? ""}
                   onValueChange={(value) =>
                     setRemindMethod(value as Task["remind_method"])
                   }
@@ -487,7 +460,7 @@ export function AddTaskDialog({
                   id="reminderDays"
                   type="number"
                   min="0"
-                  max="365" // Max 365, sesuai backend validation
+                  max="365"
                   value={reminderDays}
                   onChange={(e) =>
                     setReminderDays(Number.parseInt(e.target.value))
@@ -507,7 +480,7 @@ export function AddTaskDialog({
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={loading} // Disable cancel button when loading
+              disabled={loading}
             >
               Cancel
             </Button>

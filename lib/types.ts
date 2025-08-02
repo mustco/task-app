@@ -36,7 +36,9 @@ export interface Task {
   deadline: string | null;
   status: "pending" | "in_progress" | "completed" | "overdue";
   remind_method: "whatsapp" | "email" | "both" | null;
-  target_contact: string | null;
+  // target_contact: string | null;
+  target_email: string | null; // <<< GANTI DENGAN INI
+  target_phone: string | null; // <<< DAN TAMBAHKAN INI
   reminder_days: number | null;
   // Add other task properties from your DB here
   // created_at?: string; // Add if you select it

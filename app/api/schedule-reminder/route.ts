@@ -1,28 +1,27 @@
-// app/api/schedule-reminder/route.ts
+// app/api/schedule-reminder/route.ts (FINAL - HANYA LOGIKA KONTAK YANG DIUBAH)
 
 import { NextRequest, NextResponse } from "next/server";
-import { scheduleTaskReminder } from "../../../src/trigger/task"; // Pastikan path ini benar
-import { supabaseAdmin } from "@/lib/supabase/admin"; // Untuk operasi admin (bypass RLS)
-import { createClient } from "@/lib/supabase/server"; // Untuk klien yang diautentikasi (mematuhi RLS)
-import { z } from "zod"; // Untuk validasi input yang kuat
-import validator from 'validator'; // Untuk validasi email dan nomor telepon
+import { scheduleTaskReminder } from "../../../src/trigger/task";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { z } from "zod";
+import validator from "validator";
 
-// --- Skema Validasi Input dengan Zod ---
-// Zod membantu kita mendefinisikan bentuk data yang diharapkan dan memvalidasinya.
 const ScheduleReminderSchema = z.object({
-  taskId: z.string().uuid("Invalid taskId format. Must be a UUID."), // Pastikan taskId adalah UUID yang valid
+  taskId: z.string().uuid("Invalid taskId format. Must be a UUID."),
 });
 
-// --- Interface untuk Task dengan User dan metode pengingat ---
+// ✅ PERUBAHAN 1: Interface disesuaikan
 interface TaskWithUser {
   id: string;
-  user_id: string; // Tambahkan user_id untuk otorisasi
+  user_id: string;
   title: string;
   description?: string;
   deadline: string;
   reminder_days: number;
   remind_method: "email" | "whatsapp" | "both";
-  target_contact?: string; // Bisa email, nomor WA, atau "email|whatsapp"
+  target_email: string | null; // Kolom baru
+  target_phone: string | null; // Kolom baru
   users: {
     name: string;
     email: string;
@@ -32,44 +31,41 @@ interface TaskWithUser {
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validasi Input Body
+    // 1. Validasi Input Body (Tidak ada perubahan)
     const body = await request.json();
     const validationResult = ScheduleReminderSchema.safeParse(body);
 
     if (!validationResult.success) {
-      // Mengembalikan error validasi yang spesifik dari Zod
       return NextResponse.json(
-        { 
-          error: "Invalid request payload", 
-          details: validationResult.error.flatten().fieldErrors 
+        {
+          error: "Invalid request payload",
+          details: validationResult.error.flatten().fieldErrors,
         },
         { status: 400 }
       );
     }
-
     const { taskId } = validationResult.data;
 
-    // 2. Autentikasi Pengguna
-    // Menggunakan `createClient()` yang akan mendapatkan session pengguna dari cookies request.
-    // Ini mengasumsikan pengguna sudah login di sisi client dan cookie sesinya dikirimkan.
+    // 2. Autentikasi Pengguna (Tidak ada perubahan)
     const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
     if (authError || !user) {
       console.error("Authentication error:", authError);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 3. Ambil data task dan user (termasuk nomor telepon)
-    // Gunakan `supabase` client yang diautentikasi untuk memanfaatkan RLS.
-    // Pastikan tabel `tasks` Anda memiliki RLS yang membatasi akses ke task milik user tersebut.
+    // ✅ PERUBAHAN 2: Query select disesuaikan
     const { data: task, error: fetchError } = await supabase
       .from("tasks")
       .select(
         `
         id, title, description, deadline, reminder_days, user_id,
         remind_method, 
-        target_contact,
+        target_email, 
+        target_phone,
         users(name, email, phone_number) 
         `
       )
@@ -78,25 +74,25 @@ export async function POST(request: NextRequest) {
 
     if (fetchError || !task) {
       console.error("Supabase fetch error:", fetchError);
-      // Penting: Jangan berikan detail error yang terlalu spesifik jika task tidak ditemukan.
-      // Mengembalikan 404 jika task tidak ada, atau jika user tidak punya akses ke task tersebut (karena RLS).
       return NextResponse.json(
         { error: "Task not found or you do not have permission to access it." },
         { status: 404 }
       );
     }
 
-    // 4. Otorisasi: Pastikan task ini milik pengguna yang diautentikasi.
-    // Ini adalah lapisan keamanan ekstra jika RLS tidak sepenuhnya menangkap semua skenario,
-    // atau jika Anda ingin validasi eksplisit di kode aplikasi.
+    // 4. Otorisasi (Tidak ada perubahan)
     if (task.user_id !== user.id) {
-      console.warn(`User ${user.id} attempted to access task ${taskId} belonging to user ${task.user_id}`);
+      console.warn(
+        `User ${user.id} attempted to access task ${taskId} belonging to user ${task.user_id}`
+      );
       return NextResponse.json(
-        { error: "Forbidden: You do not have permission to schedule a reminder for this task." },
+        {
+          error:
+            "Forbidden: You do not have permission to schedule a reminder for this task.",
+        },
         { status: 403 }
       );
     }
-
     const userDetails = task.users;
     if (!userDetails) {
       return NextResponse.json(
@@ -105,97 +101,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userName = userDetails.name || "User";
-    const userEmail = userDetails.email;
-    
-    // Normalisasi nomor telepon pengguna dari database (62xxxx)
-    let userPhone = userDetails.phone_number;
-    if (userPhone && userPhone.startsWith("0")) {
-        userPhone = "62" + userPhone.substring(1);
-    }
-
-    // --- LOGIKA BERDASARKAN REMIND_METHOD & Validasi Kontak ---
+    // ✅ PERUBAHAN 3: Logika kontak disederhanakan secara total
     let recipientEmail: string | undefined;
     let recipientPhone: string | undefined;
 
-    if (task.remind_method === "email") {
-      recipientEmail = task.target_contact || userEmail;
-      if (!validator.isEmail(recipientEmail)) {
-        return NextResponse.json(
-          { error: "Invalid email address for reminder." },
-          { status: 400 }
-        );
-      }
-      recipientPhone = undefined; // Pastikan undefined jika hanya email
-    } else if (task.remind_method === "whatsapp") {
-      recipientPhone = task.target_contact || userPhone;
-      // Validasi nomor telepon: hanya digit, minimal 8 digit (contoh), dimulai dengan 62
-      if (!recipientPhone || !/^\d{8,15}$/.test(recipientPhone.replace(/\+/g, ''))) { // Hapus '+' jika ada
+    // Ambil kontak dari task, atau fallback ke profil user jika tidak ada
+    if (task.remind_method === "email" || task.remind_method === "both") {
+      recipientEmail = task.target_email || userDetails.email;
+    }
+    if (task.remind_method === "whatsapp" || task.remind_method === "both") {
+      recipientPhone = task.target_phone || userDetails.phone_number;
+    }
+
+    // Validasi dan normalisasi setelah mendapatkan nilainya
+    if (recipientEmail && !validator.isEmail(recipientEmail)) {
+      return NextResponse.json(
+        { error: "Invalid email address for reminder." },
+        { status: 400 }
+      );
+    }
+    if (recipientPhone) {
+      if (!/^\+?\d{8,15}$/.test(recipientPhone)) {
         return NextResponse.json(
           { error: "Invalid WhatsApp phone number for reminder." },
           { status: 400 }
         );
       }
-      // Normalisasi nomor telepon target_contact jika ada
+      // Normalisasi nomor telepon
       if (recipientPhone.startsWith("0")) {
         recipientPhone = "62" + recipientPhone.substring(1);
-      } else if (!recipientPhone.startsWith("62") && recipientPhone.length < 15) {
-        // Asumsi default ke 62 jika tidak dimulai dengan itu, tapi bukan format internasional penuh
-        // Logika ini bisa disesuaikan lebih lanjut
-        console.warn(`Phone number ${recipientPhone} does not start with 62. Assuming local and prepending 62.`);
-        recipientPhone = "62" + recipientPhone; 
-      }
-      recipientEmail = undefined; // Pastikan undefined jika hanya whatsapp
-    } else if (task.remind_method === "both") {
-      if (task.target_contact && task.target_contact.includes("|")) {
-        const [emailPart, whatsappPart] = task.target_contact.split("|").map(s => s.trim());
-        
-        recipientEmail = emailPart || userEmail;
-        recipientPhone = whatsappPart || userPhone;
-
-        if (!validator.isEmail(recipientEmail)) {
-          return NextResponse.json(
-            { error: "Invalid email address in target_contact for 'both' reminder." },
-            { status: 400 }
-          );
-        }
-
-        if (!recipientPhone || !/^\d{8,15}$/.test(recipientPhone.replace(/\+/g, ''))) {
-          return NextResponse.json(
-            { error: "Invalid WhatsApp phone number in target_contact for 'both' reminder." },
-            { status: 400 }
-          );
-        }
-        // Normalisasi nomor telepon dari target_contact (jika ada)
-        if (recipientPhone.startsWith("0")) {
-          recipientPhone = "62" + recipientPhone.substring(1);
-        } else if (!recipientPhone.startsWith("62") && recipientPhone.length < 15) {
-          console.warn(`Phone number ${recipientPhone} does not start with 62. Assuming local and prepending 62.`);
-          recipientPhone = "62" + recipientPhone; 
-        }
-
-      } else {
-        // Fallback jika format target_contact tidak sesuai untuk 'both'
-        recipientEmail = userEmail;
-        recipientPhone = userPhone;
-
-        if (!validator.isEmail(recipientEmail) || !recipientPhone || !/^\d{8,15}$/.test(recipientPhone.replace(/\+/g, ''))) {
-            return NextResponse.json(
-                { error: "Missing or invalid default email/phone for 'both' reminder when target_contact is malformed." },
-                { status: 400 }
-            );
-        }
-        // Normalisasi nomor telepon fallback
-        if (recipientPhone.startsWith("0")) {
-          recipientPhone = "62" + recipientPhone.substring(1);
-        } else if (!recipientPhone.startsWith("62") && recipientPhone.length < 15) {
-          console.warn(`Phone number ${recipientPhone} does not start with 62. Assuming local and prepending 62.`);
-          recipientPhone = "62" + recipientPhone; 
-        }
       }
     }
 
-    // 5. Validasi Akhir untuk Ketersediaan Kontak
+    // 5. Validasi Akhir untuk Ketersediaan Kontak (Tidak ada perubahan)
     if (task.remind_method === "email" && !recipientEmail) {
       return NextResponse.json(
         { error: "No valid email address found for email reminder." },
@@ -218,43 +156,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6. Validasi `reminder_days`
-    if (task.reminder_days < 0 || task.reminder_days > 365) { // Contoh: batasi antara 0 hingga 365 hari
+    // 6. Validasi `reminder_days` (Tidak ada perubahan)
+    if (task.reminder_days < 0 || task.reminder_days > 365) {
       return NextResponse.json(
-        { error: "Reminder days must be between 0 and 365." }, // Sesuaikan batas Anda
+        { error: "Reminder days must be between 0 and 365." },
         { status: 400 }
       );
     }
 
-    const firstName = userName.split(" ")[0] || "User";
+    const firstName = (userDetails.name || "User").split(" ")[0];
 
-    // 7. Jadwalkan Pengingat
-    // Pastikan `scheduleTaskReminder` menangani potensi undefined dengan baik,
-    // atau gunakan string kosong sesuai kebutuhan fungsi tersebut.
+    // 7. Jadwalkan Pengingat (Tidak ada perubahan)
     const handle = await scheduleTaskReminder({
       id: task.id,
       title: task.title,
       description: task.description,
       deadline: task.deadline,
       reminderDays: task.reminder_days,
-      recipientEmail: recipientEmail || "", 
-      recipientPhone: recipientPhone, // Bisa undefined, fungsi harus menanganinya
+      recipientEmail: recipientEmail || "",
+      recipientPhone: recipientPhone,
       firstName: firstName,
     });
 
-    // 8. Simpan trigger_handle_id ke database menggunakan `supabaseAdmin`
-    // SupabaseAdmin digunakan di sini karena mungkin perlu menulis ke kolom yang tidak bisa diakses user biasa
-    // atau untuk melakukan operasi yang tidak melalui RLS (misalnya untuk ID trigger).
-    // Pastikan `supabaseAdmin` memiliki policy untuk update kolom ini.
+    // 8. Simpan trigger_handle_id (Tidak ada perubahan)
     const { error: updateError } = await supabaseAdmin
       .from("tasks")
       .update({ trigger_handle_id: handle.id })
       .eq("id", task.id);
 
     if (updateError) {
-      console.error(`Failed to save trigger_handle_id for task ${task.id}:`, updateError);
-      // Ini adalah error internal server, tetapi reminder sudah terjadwal.
-      // Kita bisa tetap memberikan response sukses, tetapi log error ini penting.
+      console.error(
+        `Failed to save trigger_handle_id for task ${task.id}:`,
+        updateError
+      );
     }
 
     return NextResponse.json({
@@ -270,7 +204,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("Error scheduling reminder:", error);
-    // Hindari mengekspos detail error sensitif ke klien
     return NextResponse.json(
       { error: "Failed to schedule reminder due to an internal server error." },
       { status: 500 }
