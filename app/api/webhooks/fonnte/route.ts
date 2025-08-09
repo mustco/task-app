@@ -46,6 +46,19 @@ const normalizePhone = (raw?: string | null) => {
   return p;
 };
 
+function getIncomingToken(req: NextRequest) {
+  const url = new URL(req.url);
+  const q = (url.searchParams.get("token") || "").trim();
+  const h = (
+    req.headers.get("token") ||
+    req.headers.get("authorization") ||
+    ""
+  ).trim();
+  const raw = h || q;
+  if (/^bearer\s+/i.test(raw)) return raw.replace(/^bearer\s+/i, "").trim();
+  return raw || null;
+}
+
 async function replyViaFonnte(target62: string, message: string) {
   const form = new URLSearchParams();
   form.set("target", target62);
@@ -119,25 +132,24 @@ const scheduleUrl = () =>
 
 // ===== Handlers =====
 export async function GET(req: NextRequest) {
-  // sebagian penyedia webhook test via GET
-  const token = req.headers.get("token") || req.headers.get("authorization");
-  if (!TOKEN || token !== TOKEN)
-    return new NextResponse("unauthorized", { status: 401 });
+  // Healthcheck untuk Fonnte saat menyimpan URL
   if (!ipAllowed(req)) return new NextResponse("forbidden", { status: 403 });
   return new NextResponse("ok", { status: 200 });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    // 0) Auth by token
-    const token = req.headers.get("token") || req.headers.get("authorization");
-    if (!TOKEN || token !== TOKEN) {
+    // 0) Auth by token (support Bearer / token header / ?token=)
+    const incoming = getIncomingToken(req);
+    if (!TOKEN || !incoming || incoming !== TOKEN) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
     // 1) IP allowlist (opsional)
     if (!ipAllowed(req)) {
       return NextResponse.json({ error: "Forbidden (IP)" }, { status: 403 });
     }
+
     // 2) Baca body: JSON / form-urlencoded
     let body: any = null;
     const ct = (req.headers.get("content-type") || "").toLowerCase();
@@ -266,8 +278,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (e) {
-    // fail-closed untuk keamanan, tapi tetap 200 agar Fonnte tidak retry berulang
     console.error("Fonnte webhook error:", e);
+    // Tetap 200 supaya Fonnte tidak retry berulang
     return NextResponse.json({ ok: true });
   }
 }
