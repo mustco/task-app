@@ -3,9 +3,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useMemo, useDeferredValue } from "react";
+import dynamic from "next/dynamic";
 import { useInView } from "react-intersection-observer";
 import { createClient } from "@/lib/supabase/client";
-import type { Task, User } from "@/lib/types"; // Pastikan Task interface Anda di types.ts sudah diubah
+import type { Task, User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -27,8 +28,14 @@ import {
   Pencil,
   Loader2,
 } from "lucide-react";
-import { AddTaskDialog } from "./add-task-dialog";
-import { EditTaskDialog } from "./edit-task-dialog";
+
+// Optimasi: Lazy load komponen dialog
+const AddTaskDialog = dynamic(() => 
+  import("./add-task-dialog").then((mod) => mod.AddTaskDialog)
+);
+const EditTaskDialog = dynamic(() => 
+  import("./edit-task-dialog").then((mod) => mod.EditTaskDialog)
+);
 
 const PAGE_SIZE = 20;
 
@@ -73,7 +80,6 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
       return;
     }
 
-    // ✅ PERUBAHAN 1: Query select diubah
     const { data: newTasks, error } = await supabase
       .from("tasks")
       .select(
@@ -105,7 +111,6 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
     }
   }, [inView, hasMore, loadingMore]);
 
-  // ✅ PERUBAHAN 2: Logika pencarian diubah
   const filteredTasks = useMemo(() => {
     const searchLower = debouncedSearchTerm.toLowerCase();
     return tasks.filter((task) => {
@@ -290,7 +295,6 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
           <tbody>
             {filteredTasks.length > 0 ? (
               filteredTasks.map((task) => {
-                // ✅ PERUBAHAN 3: Logika tampilan kontak diubah (tidak ada lagi .split() )
                 return (
                   <tr
                     key={task.id}
@@ -378,7 +382,6 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
           </tbody>
         </table>
 
-        {/* --- Bagian ini SAMA PERSIS seperti kode asli Anda, tidak diubah --- */}
         {hasMore && (
           <div ref={ref} className="h-10 flex justify-center items-center">
             {loadingMore && <Loader2 className="animate-spin text-gray-500" />}
@@ -406,15 +409,15 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
         )}
       </div>
 
-      <AddTaskDialog
+      {showAddDialog && <AddTaskDialog
         open={showAddDialog}
         onOpenChange={setShowAddDialog}
         onTaskAdded={handleTaskAdded}
         defaultEmail={userProfile?.email || ""}
         defaultPhone={userProfile?.phone_number || ""}
-      />
+      />}
 
-      <EditTaskDialog
+      {editingTask && <EditTaskDialog
         open={editingTask !== null}
         onOpenChange={(isOpen) => {
           if (!isOpen) {
@@ -423,7 +426,7 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
         }}
         taskToEdit={editingTask}
         onTaskUpdated={handleTaskUpdated}
-      />
+      />}
     </div>
   );
 }
