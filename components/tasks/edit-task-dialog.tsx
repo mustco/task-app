@@ -5,6 +5,7 @@
 import type React from "react";
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { editTask } from "@/app/actions/editTask";
 import type { Task } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,139 +235,65 @@ export function EditTaskDialog({
   ]);
 
   // ✅ PERUBAHAN 5: Logika `handleSubmit` disesuaikan
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!taskToEdit) return;
-    setLoading(true);
-    setErrors({});
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!taskToEdit) return;
+  setLoading(true);
+  setErrors({});
 
-    try {
-      const dataToValidate = {
-        title,
-        description,
-        deadline,
-        status,
-        showReminder,
-        remindMethod: showReminder ? remindMethod : undefined,
-        reminderDays: showReminder ? reminderDays : undefined,
-        target_email: showReminder
-          ? remindMethod === "email"
-            ? targetContact
-            : remindMethod === "both"
-              ? emailContact
-              : undefined
-          : undefined,
-        target_phone: showReminder
-          ? remindMethod === "whatsapp"
-            ? targetContact
-            : remindMethod === "both"
-              ? whatsappContact
-              : undefined
-          : undefined,
-      };
+  try {
+    const formData = new FormData();
+    formData.append("id", taskToEdit.id);
+    formData.append("title", title);
+    formData.append("description", description);
+    formData.append("deadline", deadline);
+    formData.append("status", status);
+    formData.append("showReminder", String(showReminder));
 
-      const parsed = formSchema.safeParse(dataToValidate);
-      if (!parsed.success) {
-        const fieldErrors: Record<string, string> = {};
-        parsed.error.errors.forEach((err) => {
-          if (err.path && err.path.length > 0) {
-            const path = err.path[0].toString();
-            if (path === "target_email")
-              fieldErrors[
-                remindMethod === "both" ? "emailContact" : "targetContact"
-              ] = err.message;
-            else if (path === "target_phone")
-              fieldErrors[
-                remindMethod === "both" ? "whatsappContact" : "targetContact"
-              ] = err.message;
-            else fieldErrors[path] = err.message;
-          }
-        });
-        setErrors(fieldErrors);
-        toast({
-          title: "Validation Error",
-          description: "Please correct the errors in the form.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
+    if (showReminder) {
+      formData.append("remindMethod", remindMethod ?? "email");
+      formData.append("reminderDays", String(reminderDays));
+      if (remindMethod === "email") {
+        formData.append("target_email", targetContact);
+      } else if (remindMethod === "whatsapp") {
+        formData.append("target_phone", targetContact);
+      } else {
+        formData.append("target_email", emailContact);
+        formData.append("target_phone", whatsappContact);
       }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user)
-        throw new Error("User not authenticated. Please log in again.");
-
-      const updates: Partial<Task> = {
-        title: parsed.data.title,
-        description: parsed.data.description || null,
-        deadline: new Date(parsed.data.deadline).toISOString(),
-        status: parsed.data.status,
-        remind_method: parsed.data.showReminder
-          ? parsed.data.remindMethod!
-          : null,
-        reminder_days: parsed.data.showReminder
-          ? parsed.data.reminderDays!
-          : null,
-        target_email: parsed.data.showReminder
-          ? parsed.data.target_email || null
-          : null,
-        target_phone: parsed.data.showReminder
-          ? parsed.data.target_phone || null
-          : null,
-      };
-
-      const { data, error: supabaseError } = await supabase
-        .from("tasks")
-        .update(updates)
-        .eq("id", taskToEdit.id)
-        .eq("user_id", user.id)
-        .select()
-        .single();
-
-      if (supabaseError) throw supabaseError;
-
-      if (isReminderChanged()) {
-        fetch("/api/reschedule-reminder", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            taskId: taskToEdit.id,
-            hasReminder: parsed.data.showReminder,
-          }),
-        }).catch((err) =>
-          console.error("Background reminder rescheduling failed:", err)
-        );
-      }
-
-      onTaskUpdated(data);
-      onOpenChange(false);
-      toast({ title: "Success", description: "Note updated successfully." });
-    } catch (error: any) {
-       console.error("Error creating task:", error);
-
-       // ✅ DI SINI LOGIKANYA DITAMBAHKAN
-       let description = "Failed to create note. Please try again."; // Pesan default
-
-       if (error.message.includes("violates row-level security policy")) {
-         // Jika ini adalah error RLS, ganti pesannya menjadi lebih ramah
-         description =
-           "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda.";
-       } else {
-         // Jika error lain, gunakan pesan error aslinya
-         description = error.message || description;
-       }
-
-       toast({
-         title: "Error",
-         description: description, // <-- Gunakan pesan yang sudah kita siapkan
-         variant: "destructive",
-       });
-    } finally {
-      setLoading(false);
     }
-  };
+
+    const result = await editTask(formData);
+    if (result.success) {
+      onTaskUpdated(result.data as Task);
+      onOpenChange(false);
+      toast({ title: "Success", description: result.message });
+    } else {
+      // map error dari server ke UI
+      const fieldErrors: Record<string, string> = {};
+      if (result.errors) {
+        for (const key in result.errors) {
+          const arr = result.errors[key as keyof typeof result.errors];
+          if (arr?.length) fieldErrors[key] = arr[0];
+        }
+        // mapping ke field visual
+        if (fieldErrors.target_email && remindMethod === "email") fieldErrors.targetContact = fieldErrors.target_email;
+        if (fieldErrors.target_phone && remindMethod === "whatsapp") fieldErrors.targetContact = fieldErrors.target_phone;
+        if (fieldErrors.target_email && remindMethod === "both") fieldErrors.emailContact = fieldErrors.target_email;
+        if (fieldErrors.target_phone && remindMethod === "both") fieldErrors.whatsappContact = fieldErrors.target_phone;
+        setErrors(fieldErrors);
+        toast({ title: "Validation Error", description: "Please correct the errors in the form.", variant: "destructive" });
+      } else {
+        toast({ title: "Error", description: result.message, variant: "destructive" });
+      }
+    }
+  } catch (err: any) {
+    toast({ title: "Error", description: err.message || "Failed to save changes.", variant: "destructive" });
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   // Bagian return (JSX) TIDAK ADA PERUBAHAN SAMA SEKALI
   return (

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
+import { deleteTask as deleteTaskAction } from "@/app/actions/deleteTask";
 import {
   Select,
   SelectContent,
@@ -119,45 +120,31 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
       return matchesSearch && matchesStatus;
     });
   }, [tasks, debouncedSearchTerm, statusFilter]);
-  const deleteTask = async (taskId: string) => {
-    if (
-      !confirm(
-        "Are you sure you want to delete this note? This action cannot be undone."
-      )
-    ) {
-      return;
+ const deleteTask = async (taskId: string) => {
+  if (!confirm("Are you sure you want to delete this note? This action cannot be undone.")) return;
+
+  try {
+    const result = await deleteTaskAction(taskId);
+
+    if (!result.success) {
+      throw new Error(result.message || "Failed to delete task");
     }
-    try {
-      const response = await fetch("/api/delete-task", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to delete task");
-      }
-      setTasks((prev) => prev.filter((task) => task.id !== taskId));
-      const message = result.reminderCancelled
-        ? "Note and reminder deleted successfully."
-        : result.cancelResult?.attempted && !result.reminderCancelled
-          ? "Note deleted, but reminder might still run (was too close to execution time)."
-          : "Note deleted successfully.";
-      toast({
-        title: "Success",
-        description: message,
-      });
-    } catch (error: any) {
-      console.error("Delete error:", error);
-      toast({
-        title: "Error deleting note",
-        description:
-          error.message ||
-          "An unexpected error occurred while deleting the note.",
-        variant: "destructive",
-      });
-    }
-  };
+
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+
+    const message = result.reminderCancelled
+      ? "Note and reminder deleted successfully."
+      : "Note deleted successfully.";
+
+    toast({ title: "Success", description: message });
+  } catch (err: any) {
+    toast({
+      title: "Error deleting note",
+      description: err.message || "An unexpected error occurred.",
+      variant: "destructive",
+    });
+  }
+};
 
   const handleTaskAdded = (newTask: Task) => {
     setTasks((prev) => [newTask, ...prev]);

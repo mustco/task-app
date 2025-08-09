@@ -1,10 +1,8 @@
-// app/components/tasks/add-task-dialog.tsx (FINAL - HANYA LOGIKA KONTAK YANG DIUBAH)
-
 "use client";
 
 import type React from "react";
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createTask } from "@/app/actions/task";
 import type { Task } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,25 +26,20 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { z } from "zod";
 
-// ✅ PERUBAHAN 1: Skema Zod disesuaikan dengan target_email dan target_phone
+// schema dipakai untuk client-side guard ringan (opsional)
 const formSchema = z
   .object({
     title: z
       .string()
       .min(1, "Title is required.")
       .max(255, "Title is too long."),
-    description: z
-      .string()
-      .max(1000, "Description is too long.")
-      .nullable()
-      .optional(),
+    description: z.string().max(1000, "Description is too long.").optional(),
     deadline: z.string().refine((val) => {
       const date = new Date(val);
       return !isNaN(date.getTime()) && date > new Date();
     }, "Deadline must be a valid future date and time."),
     showReminder: z.boolean(),
     remindMethod: z.enum(["email", "whatsapp", "both"]).optional(),
-    // Kolom baru untuk validasi
     target_email: z.string().email("Invalid email format.").optional(),
     target_phone: z.string().optional(),
     reminderDays: z
@@ -56,42 +49,38 @@ const formSchema = z
       .optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.showReminder) {
-      if (!data.remindMethod) {
+    if (!data.showReminder) return;
+    if (!data.remindMethod) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Reminder method is required.",
+        path: ["remindMethod"],
+      });
+    }
+    if (data.remindMethod === "email" || data.remindMethod === "both") {
+      if (!data.target_email) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Reminder method is required.",
-          path: ["remindMethod"],
+          message: "A valid email is required.",
+          path: ["target_email"],
         });
       }
-
-      if (data.remindMethod === "email" || data.remindMethod === "both") {
-        if (!data.target_email) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "A valid email is required.",
-            path: ["target_email"], // Path error disesuaikan
-          });
-        }
-      }
-
-      if (data.remindMethod === "whatsapp" || data.remindMethod === "both") {
-        if (!data.target_phone || !/^\+?\d{8,15}$/.test(data.target_phone)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "A valid WhatsApp number is required.",
-            path: ["target_phone"], // Path error disesuaikan
-          });
-        }
-      }
-
-      if (data.reminderDays === undefined || data.reminderDays === null) {
+    }
+    if (data.remindMethod === "whatsapp" || data.remindMethod === "both") {
+      if (!data.target_phone || !/^\+?\d{8,15}$/.test(data.target_phone)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Reminder days are required.",
-          path: ["reminderDays"],
+          message: "A valid WhatsApp number is required.",
+          path: ["target_phone"],
         });
       }
+    }
+    if (data.reminderDays === undefined || data.reminderDays === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Reminder days are required.",
+        path: ["reminderDays"],
+      });
     }
   });
 
@@ -110,24 +99,22 @@ export function AddTaskDialog({
   defaultEmail,
   defaultPhone,
 }: AddTaskDialogProps) {
-  // State management TIDAK DIUBAH untuk menjaga struktur form
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
   const [showReminder, setShowReminder] = useState(false);
   const [remindMethod, setRemindMethod] =
     useState<Task["remind_method"]>("email");
-  const [targetContact, setTargetContact] = useState(""); // Untuk input tunggal
-  const [emailContact, setEmailContact] = useState(""); // Untuk input 'both'
-  const [whatsappContact, setWhatsappContact] = useState(""); // Untuk input 'both'
+  const [targetContact, setTargetContact] = useState(""); // single input (email/wa)
+  const [emailContact, setEmailContact] = useState(""); // for 'both'
+  const [whatsappContact, setWhatsappContact] = useState(""); // for 'both'
   const [reminderDays, setReminderDays] = useState(1);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const { toast } = useToast();
-  const supabase = createClient();
 
-  // useEffect TIDAK DIUBAH
+  // hydrate defaults based on method
   useEffect(() => {
     if (showReminder) {
       if (remindMethod === "email") {
@@ -172,141 +159,83 @@ export function AddTaskDialog({
     setLoading(true);
     setErrors({});
 
-    try {
-      // ✅ PERUBAHAN 2: Menyiapkan data untuk Zod sesuai skema baru
-      const dataToValidate = {
-        title,
-        description,
-        deadline,
-        showReminder,
-        remindMethod: showReminder ? remindMethod : undefined,
-        reminderDays: showReminder ? reminderDays : undefined,
-        target_email: showReminder
-          ? remindMethod === "email"
-            ? targetContact
-            : remindMethod === "both"
-              ? emailContact
-              : undefined
-          : undefined,
-        target_phone: showReminder
-          ? remindMethod === "whatsapp"
-            ? targetContact
-            : remindMethod === "both"
-              ? whatsappContact
-              : undefined
-          : undefined,
-      };
+    const formData = new FormData();
+    formData.append("title", title);
+    formData.append("description", description);
+    formData.append("deadline", deadline);
+    formData.append("showReminder", String(showReminder));
 
-      const parsed = formSchema.safeParse(dataToValidate);
-      if (!parsed.success) {
-        const fieldErrors: Record<string, string> = {};
-        parsed.error.errors.forEach((err) => {
-          if (err.path && err.path.length > 0) {
-            // Menyesuaikan path error kembali ke nama input form
-            const path = err.path[0].toString();
-            if (path === "target_email") {
-              fieldErrors[
-                remindMethod === "both" ? "emailContact" : "targetContact"
-              ] = err.message;
-            } else if (path === "target_phone") {
-              fieldErrors[
-                remindMethod === "both" ? "whatsappContact" : "targetContact"
-              ] = err.message;
-            } else {
-              fieldErrors[path] = err.message;
-            }
-          }
-        });
-        setErrors(fieldErrors);
-        toast({
-          title: "Validation Error",
-          description: "Please correct the errors in the form.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
+    if (showReminder) {
+      formData.append("remindMethod", remindMethod ?? "email");
+      formData.append("reminderDays", String(reminderDays));
+
+      if (remindMethod === "email") {
+        formData.append("target_email", targetContact);
+      } else if (remindMethod === "whatsapp") {
+        formData.append("target_phone", targetContact);
+      } else if (remindMethod === "both") {
+        formData.append("target_email", emailContact);
+        formData.append("target_phone", whatsappContact);
       }
+    }
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user)
-        throw new Error("User not authenticated. Please log in again.");
+    const result = await createTask(formData);
+    setLoading(false);
 
-      // ✅ PERUBAHAN 3: Menyiapkan payload untuk database dengan kolom baru
-      const taskPayload = {
-        user_id: user.id,
-        title: parsed.data.title,
-        description: parsed.data.description || null,
-        deadline: new Date(parsed.data.deadline).toISOString(),
-        status: "pending" as const,
-        remind_method: parsed.data.showReminder
-          ? parsed.data.remindMethod!
-          : null,
-        reminder_days: parsed.data.showReminder
-          ? parsed.data.reminderDays!
-          : null,
-        target_email: parsed.data.showReminder
-          ? parsed.data.target_email || null
-          : null,
-        target_phone: parsed.data.showReminder
-          ? parsed.data.target_phone || null
-          : null,
-      };
-
-      const { data, error: supabaseError } = await supabase
-        .from("tasks")
-        .insert(taskPayload)
-        .select()
-        .single();
-
-      if (supabaseError) throw supabaseError;
-
-      if (parsed.data.showReminder) {
-        fetch("/api/schedule-reminder", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ taskId: data.id }),
-        }).catch((err) => {
-          console.error("Background reminder scheduling failed:", err);
-        });
-      }
-
-      onTaskAdded(data);
+    if (result.success) {
+      toast({ title: "Success", description: result.message });
+      onTaskAdded(result.data as Task);
       onOpenChange(false);
-      toast({ title: "Success", description: "Note created successfully." });
-    } catch (error: any) {
-      console.error("Error creating task:", error);
+      return;
+    }
 
-      // ✅ DI SINI LOGIKANYA DITAMBAHKAN
-      let description = "Failed to create note. Please try again."; // Pesan default
+    // ---- Error handling + mapping ke field UI ----
+    if (result.errors) {
+      const serverErrors = result.errors as Record<string, string[]>;
+      const fieldErrors: Record<string, string> = {};
 
-      if (error.message.includes("violates row-level security policy")) {
-        // Jika ini adalah error RLS, ganti pesannya menjadi lebih ramah
-        description =
-          "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda.";
-      } else {
-        // Jika error lain, gunakan pesan error aslinya
-        description = error.message || description;
+      // copy apa adanya dulu
+      for (const key in serverErrors) {
+        const msg = serverErrors[key]?.[0];
+        if (msg) fieldErrors[key] = msg;
       }
 
+      // map ke field visual
+      if (fieldErrors.target_email && remindMethod === "email") {
+        fieldErrors.targetContact = fieldErrors.target_email;
+      }
+      if (fieldErrors.target_phone && remindMethod === "whatsapp") {
+        fieldErrors.targetContact = fieldErrors.target_phone;
+      }
+      if (fieldErrors.target_email && remindMethod === "both") {
+        fieldErrors.emailContact = fieldErrors.target_email;
+      }
+      if (fieldErrors.target_phone && remindMethod === "both") {
+        fieldErrors.whatsappContact = fieldErrors.target_phone;
+      }
+
+      setErrors(fieldErrors);
       toast({
-        title: "Error",
-        description: description, // <-- Gunakan pesan yang sudah kita siapkan
+        title: "Validation Error",
+        description: "Please correct the errors in the form.",
         variant: "destructive",
       });
-    } finally {
-      setLoading(false);
+    } else {
+      toast({
+        title: "Error",
+        description: result.message,
+        variant: "destructive",
+      });
     }
   };
 
-  // Bagian return (JSX) TIDAK ADA PERUBAHAN SAMA SEKALI
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>Add New Note</DialogTitle>
         </DialogHeader>
+
         <form onSubmit={handleSubmit} className="space-y-4 pt-4">
           <div>
             <Label htmlFor="title">Title *</Label>
@@ -321,6 +250,7 @@ export function AddTaskDialog({
               <p className="text-red-500 text-sm mt-1">{errors.title}</p>
             )}
           </div>
+
           <div>
             <Label htmlFor="description">Description</Label>
             <Textarea
@@ -334,6 +264,7 @@ export function AddTaskDialog({
               <p className="text-red-500 text-sm mt-1">{errors.description}</p>
             )}
           </div>
+
           <div>
             <Label htmlFor="deadline">Deadline *</Label>
             <Input
@@ -405,13 +336,14 @@ export function AddTaskDialog({
                     type="email"
                     required={showReminder}
                   />
-                  {errors.targetContact && (
+                  {(errors.targetContact || errors.target_email) && (
                     <p className="text-red-500 text-sm mt-1">
-                      {errors.targetContact}
+                      {errors.targetContact || errors.target_email}
                     </p>
                   )}
                 </div>
               )}
+
               {remindMethod === "whatsapp" && (
                 <div>
                   <Label htmlFor="targetContact">WhatsApp Number *</Label>
@@ -422,13 +354,14 @@ export function AddTaskDialog({
                     onChange={(e) => setTargetContact(e.target.value)}
                     required={showReminder}
                   />
-                  {errors.targetContact && (
+                  {(errors.targetContact || errors.target_phone) && (
                     <p className="text-red-500 text-sm mt-1">
-                      {errors.targetContact}
+                      {errors.targetContact || errors.target_phone}
                     </p>
                   )}
                 </div>
               )}
+
               {remindMethod === "both" && (
                 <div className="space-y-3">
                   <div>
@@ -441,9 +374,9 @@ export function AddTaskDialog({
                       type="email"
                       required={showReminder}
                     />
-                    {errors.emailContact && (
+                    {(errors.emailContact || errors.target_email) && (
                       <p className="text-red-500 text-sm mt-1">
-                        {errors.emailContact}
+                        {errors.emailContact || errors.target_email}
                       </p>
                     )}
                   </div>
@@ -456,9 +389,9 @@ export function AddTaskDialog({
                       onChange={(e) => setWhatsappContact(e.target.value)}
                       required={showReminder}
                     />
-                    {errors.whatsappContact && (
+                    {(errors.whatsappContact || errors.target_phone) && (
                       <p className="text-red-500 text-sm mt-1">
-                        {errors.whatsappContact}
+                        {errors.whatsappContact || errors.target_phone}
                       </p>
                     )}
                   </div>
