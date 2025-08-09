@@ -187,28 +187,23 @@ export async function POST(request: NextRequest) {
       if (recipientPhone) {
         recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
         if (recipientPhone.startsWith("0")) {
-          // 08xxxx -> +62xxxx
-          recipientPhone = "+62" + recipientPhone.slice(1);
-        } else if (recipientPhone.startsWith("62")) {
-          // 62xxxx -> +62xxxx
-          recipientPhone = "+" + recipientPhone;
-        } else if (!recipientPhone.startsWith("+")) {
-          // Kalau hanya angka (misal 812xxxx), jadikan +812xxxx (lebih baik user isi kode negara)
-          if (/^\d{8,15}$/.test(recipientPhone)) {
-            recipientPhone = "+" + recipientPhone;
-          }
+          // 08xxx -> 62xxx
+          recipientPhone = "62" + recipientPhone.slice(1);
+        } else if (recipientPhone.startsWith("+62")) {
+          // +62xxx -> 62xxx
+          recipientPhone = recipientPhone.slice(1);
+        } else if (!recipientPhone.startsWith("62")) {
+          // misal 812xxx -> 62812xxx
+          recipientPhone = "62" + recipientPhone;
         }
-
-        if (!/^\+\d{8,15}$/.test(recipientPhone)) {
+        if (!/^62\d{8,13}$/.test(recipientPhone)) {
           return NextResponse.json(
-            {
-              error:
-                "Invalid WhatsApp phone number for reminder (use E.164, e.g. +62812xxxx).",
-            },
+            { error: "Invalid WhatsApp number format (must start with 62...)" },
             { status: 400 }
           );
         }
       }
+
 
       // Validasi Ketersediaan Kontak
       if (task.remind_method === "email" && !recipientEmail) {
