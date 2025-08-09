@@ -170,37 +170,37 @@ export async function editTask(formData: FormData) {
   // kalau berubah → panggil /api/reschedule-reminder dengan Cookie
   if (reminderChanged) {
     const base = getBaseUrl();
-    console.log(`[editTask] Base URL determined: ${base}`); // LOGGING
     const cookieHeader = cookies().toString();
     const url = new URL("/api/reschedule-reminder", base).toString();
-    console.log(`[editTask] Triggering reschedule API at: ${url}`); // LOGGING
 
-    fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookieHeader,
-      },
-      body: JSON.stringify({
-        taskId,
-        hasReminder: Boolean(updates.remind_method),
-      }),
-      cache: "no-store",
-    })
-      .then(async (res) => { // LOGGING
-        console.log(
-          `[editTask] Reschedule API response status: ${res.status}`
-        );
-        if (!res.ok) {
-          const responseBody = await res.text();
-          console.error(
-            `[editTask] Reschedule API response error body: ${responseBody}`
-          );
-        }
-      })
-      .catch((err) => { // LOGGING
-        console.error("Background reminder rescheduling failed:", err);
+    // AWAIT the fetch call to ensure it completes
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: cookieHeader,
+        },
+        body: JSON.stringify({
+          taskId,
+          hasReminder: Boolean(updates.remind_method),
+        }),
+        cache: "no-store",
       });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(
+          `Error in background reschedule: ${response.status} - ${errorBody}`
+        );
+        // Optionally, you can reflect this failure back to the user
+        // return { success: false, message: "Task updated, but failed to reschedule reminder." };
+      }
+    } catch (err) {
+      console.error("Background reminder rescheduling failed:", err);
+      // Optionally, reflect failure to the user
+      // return { success: false, message: "Task updated, but failed to reschedule reminder." };
+    }
   }
 
   return {

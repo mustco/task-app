@@ -12,7 +12,8 @@ const RescheduleReminderSchema = z.object({
   hasReminder: z.boolean(),
 });
 
-// ✅ PERUBAHAN 1: Interface disesuaikan
+// ✅ PERUBAHAN 1: Interface disesuaikanAdnan0111710
+
 interface TaskWithUser {
   id: string;
   user_id: string;
@@ -33,19 +34,11 @@ interface TaskWithUser {
 
 async function cancelTriggerHandle(handleId: string): Promise<boolean> {
   const url = `https://api.trigger.dev/api/v2/runs/${handleId}/cancel`;
-  // LOGGING: Check if the key exists and show a portion of it
-  const secretKey = process.env.TRIGGER_SECRET_KEY;
-  console.log(
-    `[cancelTriggerHandle] Attempting to cancel. Trigger Key available: ${Boolean(
-      secretKey
-    )}, Starts with: ${secretKey?.substring(0, 8)}`
-  );
-
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${secretKey}`,
+        Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
         "Content-Type": "application/json",
       },
       signal: AbortSignal.timeout(5000),
@@ -69,11 +62,9 @@ async function cancelTriggerHandle(handleId: string): Promise<boolean> {
 }
 
 export async function POST(request: NextRequest) {
-  console.log("[reschedule-reminder] API route invoked."); // LOGGING
   try {
     // 1. Validasi Input Body
     const body = await request.json();
-    console.log("[reschedule-reminder] Request body:", body); // LOGGING
     const validationResult = RescheduleReminderSchema.safeParse(body);
     if (!validationResult.success) {
       return NextResponse.json(
