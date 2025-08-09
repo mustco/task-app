@@ -30,40 +30,73 @@ interface TaskWithUser {
   } | null;
 }
 
+// Optimized cancel function dengan timeout lebih pendek
 async function cancelTriggerHandle(handleId: string): Promise<boolean> {
   const url = `https://api.trigger.dev/api/v2/runs/${handleId}/cancel`;
+
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 detik aja
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(5000),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
+
     if (response.ok) {
-      console.log(`✅ Successfully cancelled trigger ${handleId} using ${url}`);
+      console.log(`✅ Cancelled trigger ${handleId}`);
       return true;
     } else {
       console.warn(
-        `❌ Failed to cancel trigger ${handleId} with ${url}: ${response.status} - ${await response.text()}`
+        `❌ Failed to cancel trigger ${handleId}: ${response.status}`
       );
       return false;
     }
   } catch (error: any) {
-    if (error.name === "AbortError")
-      console.error(`Timeout when trying to cancel trigger ${handleId}.`);
-    else
-      console.error(`Error cancelling trigger ${handleId} with ${url}:`, error);
+    if (error.name === "AbortError") {
+      console.error(`⏰ Timeout cancelling trigger ${handleId}`);
+    } else {
+      console.error(`Error cancelling trigger ${handleId}:`, error);
+    }
     return false;
   }
 }
 
+// Optimized phone normalization
+function normalizePhoneNumber(phone: string): string | null {
+  const cleaned = phone.trim().replace(/[\s-]/g, "");
+
+  if (cleaned.startsWith("0")) {
+    return "62" + cleaned.slice(1);
+  } else if (cleaned.startsWith("+62")) {
+    return cleaned.slice(1);
+  } else if (!cleaned.startsWith("62")) {
+    return "62" + cleaned;
+  }
+  return cleaned;
+}
+
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+
   try {
-    // 1. Validasi Input Body
-    const body = await request.json();
-    const validationResult = RescheduleReminderSchema.safeParse(body);
+    // 1. Paralel validation + auth
+    const [bodyResult, authResult] = await Promise.all([
+      request.json(),
+      (async () => {
+        const supabase = await createClient();
+        return supabase.auth.getUser();
+      })(),
+    ]);
+
+    // Validate input
+    const validationResult = RescheduleReminderSchema.safeParse(bodyResult);
     if (!validationResult.success) {
       return NextResponse.json(
         {
@@ -73,69 +106,54 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { taskId, hasReminder } = validationResult.data;
 
-    // 2. Autentikasi Pengguna
-    const supabase = await createClient();
+    // Check auth
     const {
       data: { user },
       error: authError,
-    } = await supabase.auth.getUser();
+    } = authResult;
     if (authError || !user) {
       console.error("Authentication error:", authError);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 3. Ambil task + user
+    const { taskId, hasReminder } = validationResult.data;
+
+    // 2. Fetch task dengan optimized query
+    const supabase = await createClient();
     const { data: task, error: fetchError } = await supabase
       .from("tasks")
       .select(
-        `
-        id, title, description, deadline, reminder_days, user_id,
-        remind_method, target_email, target_phone, trigger_handle_id,
-        users(name, email, phone_number)
-        `
+        `id, title, description, deadline, reminder_days, user_id,
+         remind_method, target_email, target_phone, trigger_handle_id,
+         users!inner(name, email, phone_number)`
       )
       .eq("id", taskId)
+      .eq("user_id", user.id) // Filter di query level
       .single<TaskWithUser>();
 
     if (fetchError || !task) {
-      console.error("Supabase fetch error:", fetchError);
+      console.error("Task fetch error:", fetchError);
       return NextResponse.json(
-        { error: "Task not found or you do not have permission to access it." },
+        { error: "Task not found or access denied." },
         { status: 404 }
       );
     }
 
-    // 4. Otorisasi
-    if (task.user_id !== user.id) {
-      console.warn(
-        `User ${user.id} attempted to reschedule reminder for task ${taskId} belonging to user ${task.user_id}`
-      );
-      return NextResponse.json(
-        {
-          error:
-            "Forbidden: You do not have permission to reschedule reminders for this task.",
-        },
-        { status: 403 }
-      );
-    }
-
+    // 3. Cancel old trigger (non-blocking jika gagal)
     let cancelResult = { success: false, attempted: false };
+    let cancelPromise: Promise<void> | null = null;
 
-    // 5. HAPUS JADWAL LAMA
     if (task.trigger_handle_id) {
       cancelResult.attempted = true;
-      console.log(
-        `🔄 Attempting to cancel old reminder: ${task.trigger_handle_id}`
+      console.log(`🔄 Cancelling old reminder: ${task.trigger_handle_id}`);
+
+      // Start cancel in background
+      cancelPromise = cancelTriggerHandle(task.trigger_handle_id).then(
+        (success) => {
+          cancelResult.success = success;
+        }
       );
-      cancelResult.success = await cancelTriggerHandle(task.trigger_handle_id);
-      if (cancelResult.success)
-        console.log(`✅ Old reminder cancelled successfully`);
-      else
-        console.warn(
-          `⚠️ Could not cancel old reminder ${task.trigger_handle_id} - might already be executed or expired`
-        );
     }
 
     let newTriggerHandleId: string | null = null;
@@ -146,16 +164,15 @@ export async function POST(request: NextRequest) {
       method: undefined as string | undefined,
     };
 
+    // 4. Schedule new reminder (jika diperlukan)
     if (hasReminder) {
       if (!task.remind_method) {
         return NextResponse.json(
-          {
-            error:
-              "Remind method not set for this task. Cannot schedule a reminder.",
-          },
+          { error: "Remind method not set for this task." },
           { status: 400 }
         );
       }
+
       const userDetails = task.users;
       if (!userDetails) {
         return NextResponse.json(
@@ -164,57 +181,52 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 6. Siapkan kontak tujuan (dengan normalisasi E.164 untuk WhatsApp)
+      // Quick validation
+      if (task.reminder_days < 0 || task.reminder_days > 365) {
+        return NextResponse.json(
+          { error: "Reminder days must be between 0 and 365." },
+          { status: 400 }
+        );
+      }
+
+      // Setup recipients
       let recipientEmail: string | undefined;
       let recipientPhone: string | undefined;
 
       if (task.remind_method === "email" || task.remind_method === "both") {
         recipientEmail = task.target_email || userDetails.email;
-      }
-      if (task.remind_method === "whatsapp" || task.remind_method === "both") {
-        recipientPhone =
-          task.target_phone || userDetails.phone_number || undefined;
-      }
-
-      if (recipientEmail && !validator.isEmail(recipientEmail)) {
-        return NextResponse.json(
-          { error: "Invalid email address for reminder." },
-          { status: 400 }
-        );
-      }
-
-      // Normalisasi & validasi nomor telepon → E.164 (+62...)
-      if (recipientPhone) {
-        recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
-        if (recipientPhone.startsWith("0")) {
-          // 08xxx -> 62xxx
-          recipientPhone = "62" + recipientPhone.slice(1);
-        } else if (recipientPhone.startsWith("+62")) {
-          // +62xxx -> 62xxx
-          recipientPhone = recipientPhone.slice(1);
-        } else if (!recipientPhone.startsWith("62")) {
-          // misal 812xxx -> 62812xxx
-          recipientPhone = "62" + recipientPhone;
-        }
-        if (!/^62\d{8,13}$/.test(recipientPhone)) {
+        if (!validator.isEmail(recipientEmail)) {
           return NextResponse.json(
-            { error: "Invalid WhatsApp number format (must start with 62...)" },
+            { error: "Invalid email address." },
             { status: 400 }
           );
         }
       }
 
+      if (task.remind_method === "whatsapp" || task.remind_method === "both") {
+        const phoneToNormalize = task.target_phone || userDetails.phone_number;
+       if (phoneToNormalize) {
+         const normalized = normalizePhoneNumber(phoneToNormalize);
+         recipientPhone = normalized || undefined; // Convert null to undefined
+         if (!recipientPhone || !/^62\d{8,13}$/.test(recipientPhone)) {
+           return NextResponse.json(
+             { error: "Invalid WhatsApp number format." },
+             { status: 400 }
+           );
+         }
+       }
+      }
 
-      // Validasi Ketersediaan Kontak
+      // Validate required contacts
       if (task.remind_method === "email" && !recipientEmail) {
         return NextResponse.json(
-          { error: "No valid email address found for email reminder." },
+          { error: "No valid email address found." },
           { status: 400 }
         );
       }
       if (task.remind_method === "whatsapp" && !recipientPhone) {
         return NextResponse.json(
-          { error: "No valid phone number found for WhatsApp reminder." },
+          { error: "No valid phone number found." },
           { status: 400 }
         );
       }
@@ -223,39 +235,27 @@ export async function POST(request: NextRequest) {
         (!recipientEmail || !recipientPhone)
       ) {
         return NextResponse.json(
-          {
-            error:
-              "Valid email and phone number are required for both reminder methods.",
-          },
+          { error: "Both email and phone required." },
           { status: 400 }
         );
       }
 
-      // Validasi `reminder_days`
-      if (task.reminder_days < 0 || task.reminder_days > 365) {
-        return NextResponse.json(
-          { error: "Reminder days must be between 0 and 365." },
-          { status: 400 }
-        );
-      }
-
-      const firstName = (userDetails.name || "User").split(" ")[0];
+      // Check timing
       const deadlineDate = new Date(task.deadline);
       const reminderTimestamp =
         deadlineDate.getTime() - task.reminder_days * 24 * 60 * 60 * 1000;
 
-      // Izinkan jadwal "sekarang persis" (ubah <= menjadi <)
       if (reminderTimestamp < Date.now()) {
         return NextResponse.json(
-          {
-            error:
-              "The calculated reminder time has already passed. Cannot schedule reminder for a past date.",
-          },
+          { error: "Reminder time has already passed." },
           { status: 400 }
         );
       }
 
+      // Schedule new reminder
       try {
+        const firstName = (userDetails.name || "User").split(" ")[0];
+
         const handle = await scheduleTaskReminder({
           id: task.id,
           title: task.title,
@@ -266,6 +266,7 @@ export async function POST(request: NextRequest) {
           recipientPhone: recipientPhone,
           firstName: firstName,
         });
+
         newTriggerHandleId = handle.id;
         scheduleResult.success = true;
         scheduledFor = {
@@ -273,28 +274,44 @@ export async function POST(request: NextRequest) {
           whatsapp: recipientPhone,
           method: task.remind_method,
         };
+
         console.log(`✅ New reminder scheduled: ${newTriggerHandleId}`);
       } catch (error: any) {
         scheduleResult.error = error.message;
-        console.error("Error scheduling new reminder:", error);
+        console.error("Error scheduling reminder:", error);
         return NextResponse.json(
-          { error: "Failed to schedule new reminder", details: error.message },
+          { error: "Failed to schedule reminder", details: error.message },
           { status: 500 }
         );
       }
-    } else {
-      console.log("hasReminder is false. No new reminder will be scheduled.");
     }
 
-    // 7. UPDATE TRIGGER_HANDLE_ID DI DATABASE
+    // 5. Wait for cancel to complete (with timeout)
+    if (cancelPromise) {
+      try {
+        await Promise.race([
+          cancelPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Cancel timeout")), 2000)
+          ),
+        ]);
+      } catch (err) {
+        console.warn("Cancel operation timed out or failed, continuing...");
+      }
+    }
+
+    // 6. Update database
     const { error: updateError } = await supabaseAdmin
       .from("tasks")
       .update({ trigger_handle_id: newTriggerHandleId })
       .eq("id", taskId);
 
     if (updateError) {
-      console.error("Failed to update trigger_handle_id in DB:", updateError);
+      console.error("Failed to update trigger_handle_id:", updateError);
     }
+
+    const processingTime = Date.now() - startTime;
+    console.log(`⚡ Reschedule completed in ${processingTime}ms`);
 
     return NextResponse.json({
       success: true,
@@ -304,15 +321,22 @@ export async function POST(request: NextRequest) {
       taskId: task.id,
       oldTriggerHandle: task.trigger_handle_id,
       newTriggerHandle: newTriggerHandleId,
-      cancelResult: cancelResult,
-      scheduleResult: scheduleResult,
+      cancelResult,
+      scheduleResult,
       action: hasReminder ? "rescheduled" : "cancelled",
-      scheduledFor: scheduledFor,
+      scheduledFor,
+      processingTime,
     });
   } catch (error: any) {
-    console.error("Error in reschedule-reminder API:", error);
+    const processingTime = Date.now() - startTime;
+    console.error(`💥 Error after ${processingTime}ms:`, error);
+
     return NextResponse.json(
-      { error: "Failed to process reminder request", details: error.message },
+      {
+        error: "Failed to process reminder request",
+        details: error.message,
+        processingTime,
+      },
       { status: 500 }
     );
   }

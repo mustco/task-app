@@ -70,140 +70,161 @@ const getStr = (fd: FormData, key: string) => {
   return v == null ? undefined : String(v);
 };
 
-export async function editTask(formData: FormData) {
-  const supabase = await createClient();
-
-  // auth
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { success: false, message: "User not authenticated." };
-
-  // ambil task lama (buat compare)
-  const taskId = getStr(formData, "id");
-  if (!taskId) return { success: false, message: "Task id is required." };
-
-  const { data: oldTask, error: fetchErr } = await supabase
-    .from("tasks")
-    .select(
-      "id, user_id, title, description, deadline, status, remind_method, reminder_days, target_email, target_phone"
-    )
-    .eq("id", taskId)
-    .eq("user_id", user.id)
-    .single();
-
-  if (fetchErr || !oldTask) {
-    return { success: false, message: "Task not found or permission denied." };
-  }
-
-  // normalisasi form
-  const raw = {
-    id: taskId,
-    title: getStr(formData, "title"),
-    description: getStr(formData, "description"),
-    deadline: getStr(formData, "deadline"),
-    status: getStr(formData, "status"),
-    showReminder: formData.get("showReminder") === "true",
-    remindMethod: getStr(formData, "remindMethod"),
-    target_email: getStr(formData, "target_email"),
-    target_phone: getStr(formData, "target_phone"),
-    reminderDays: formData.get("reminderDays")
-      ? Number(formData.get("reminderDays"))
-      : undefined,
-  };
-
-  const parsed = editSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      success: false,
-      message: "Invalid form data.",
-      errors: parsed.error.flatten().fieldErrors,
-    };
-  }
-
-  const d = parsed.data;
-
-  // build update payload
-  const updates = {
-    title: d.title,
-    description: d.description || null,
-    deadline: new Date(d.deadline).toISOString(),
-    status: d.status,
-    remind_method: d.showReminder ? d.remindMethod! : null,
-    reminder_days: d.showReminder ? d.reminderDays! : null,
-    target_email: d.showReminder ? d.target_email || null : null,
-    target_phone: d.showReminder ? d.target_phone || null : null,
-  };
-
-  // update
-  const { data: updated, error: upErr } = await supabase
-    .from("tasks")
-    .update(updates)
-    .eq("id", taskId)
-    .eq("user_id", user.id)
-    .select()
-    .single();
-
-  if (upErr) {
-    const msg = upErr.message?.includes("row-level security")
-      ? "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda."
-      : upErr.message || "Update failed.";
-    return { success: false, message: msg };
-  }
-
-  // cek perubahan yang berpengaruh ke reminder
-  const reminderChanged =
+// Helper function untuk check apakah reminder berubah
+function hasReminderChanged(oldTask: any, updates: any): boolean {
+  return (
     (oldTask.remind_method ?? null) !== (updates.remind_method ?? null) ||
     (oldTask.reminder_days ?? null) !== (updates.reminder_days ?? null) ||
     (oldTask.target_email ?? null) !== (updates.target_email ?? null) ||
     (oldTask.target_phone ?? null) !== (updates.target_phone ?? null) ||
-    new Date(oldTask.deadline).toISOString() !== updates.deadline;
+    new Date(oldTask.deadline).toISOString() !== updates.deadline
+  );
+}
 
-  // kalau berubah → panggil /api/reschedule-reminder dengan host dari header (CARA B)
-  if (reminderChanged) {
-    // Build absolute URL dari header reverse proxy (kompatibel Netlify)
+// Background function untuk reschedule - fire and forget
+async function triggerRescheduleReminder(taskId: string, hasReminder: boolean) {
+  try {
     const h = headers();
     const host = h.get("x-forwarded-host") || h.get("host");
     const proto = h.get("x-forwarded-proto") || "https";
-    if (host) {
-      const url = `${proto}://${host}/api/reschedule-reminder`;
-      const cookieHeader = cookies().toString();
 
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: cookieHeader,
-          },
-          body: JSON.stringify({
-            taskId,
-            hasReminder: Boolean(updates.remind_method),
-          }),
-          cache: "no-store",
-        });
-
-        if (!response.ok) {
-          const errorBody = await response.text();
-          console.error(
-            `Error in background reschedule: ${response.status} - ${errorBody}`
-          );
-          // (opsional) tampilkan ke user:
-          // return { success: false, message: "Task updated, but failed to reschedule reminder." };
-        }
-      } catch (err) {
-        console.error("Background reminder rescheduling failed:", err);
-        // (opsional) reflect failure
-        // return { success: false, message: "Task updated, but failed to reschedule reminder." };
-      }
-    } else {
-      console.error("Unable to resolve host for reschedule-reminder call.");
+    if (!host) {
+      console.warn("No host found for reschedule reminder");
+      return;
     }
-  }
 
-  return {
-    success: true,
-    message: "Note updated successfully.",
-    data: updated,
-  };
+    const url = `${proto}://${host}/api/reschedule-reminder`;
+    const cookieHeader = cookies().toString();
+
+    // Fire and forget - jangan await!
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookieHeader,
+      },
+      body: JSON.stringify({ taskId, hasReminder }),
+      signal: AbortSignal.timeout(8000), // 8 detik timeout
+    }).catch((err) => {
+      console.error("Background reminder rescheduling failed:", err);
+    });
+  } catch (err) {
+    console.error("Failed to trigger reschedule reminder:", err);
+  }
+}
+
+export async function editTask(formData: FormData) {
+  const supabase = await createClient();
+
+  try {
+    // 1. Paralel: Auth + form parsing
+    const [authResult, taskId] = await Promise.all([
+      supabase.auth.getUser(),
+      Promise.resolve(getStr(formData, "id")),
+    ]);
+
+    const {
+      data: { user },
+    } = authResult;
+    if (!user) return { success: false, message: "User not authenticated." };
+    if (!taskId) return { success: false, message: "Task id is required." };
+
+    // 2. Parse form data lebih efisien
+    const raw = {
+      id: taskId,
+      title: getStr(formData, "title"),
+      description: getStr(formData, "description"),
+      deadline: getStr(formData, "deadline"),
+      status: getStr(formData, "status"),
+      showReminder: formData.get("showReminder") === "true",
+      remindMethod: getStr(formData, "remindMethod"),
+      target_email: getStr(formData, "target_email"),
+      target_phone: getStr(formData, "target_phone"),
+      reminderDays: formData.get("reminderDays")
+        ? Number(formData.get("reminderDays"))
+        : undefined,
+    };
+
+    // 3. Paralel: Validation + fetch old task
+    const [parseResult, taskResult] = await Promise.all([
+      Promise.resolve(editSchema.safeParse(raw)),
+      supabase
+        .from("tasks")
+        .select(
+          "id, user_id, title, description, deadline, status, remind_method, reminder_days, target_email, target_phone"
+        )
+        .eq("id", taskId)
+        .eq("user_id", user.id)
+        .single(),
+    ]);
+
+    // Handle validation error
+    if (!parseResult.success) {
+      return {
+        success: false,
+        message: "Invalid form data.",
+        errors: parseResult.error.flatten().fieldErrors,
+      };
+    }
+
+    // Handle fetch error
+    const { data: oldTask, error: fetchErr } = taskResult;
+    if (fetchErr || !oldTask) {
+      return {
+        success: false,
+        message: "Task not found or permission denied.",
+      };
+    }
+
+    const d = parseResult.data;
+
+    // 4. Build update payload
+    const updates = {
+      title: d.title,
+      description: d.description || null,
+      deadline: new Date(d.deadline).toISOString(),
+      status: d.status,
+      remind_method: d.showReminder ? d.remindMethod! : null,
+      reminder_days: d.showReminder ? d.reminderDays! : null,
+      target_email: d.showReminder ? d.target_email || null : null,
+      target_phone: d.showReminder ? d.target_phone || null : null,
+    };
+
+    // 5. Check reminder changes SEBELUM update
+    const reminderChanged = hasReminderChanged(oldTask, updates);
+
+    // 6. Update task
+    const { data: updated, error: upErr } = await supabase
+      .from("tasks")
+      .update(updates)
+      .eq("id", taskId)
+      .eq("user_id", user.id)
+      .select()
+      .single();
+
+    if (upErr) {
+      const msg = upErr.message?.includes("row-level security")
+        ? "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda."
+        : upErr.message || "Update failed.";
+      return { success: false, message: msg };
+    }
+
+    // 7. FIRE AND FORGET reminder reschedule jika ada perubahan
+    if (reminderChanged) {
+      // Jangan await! Biar background process
+      triggerRescheduleReminder(taskId, Boolean(updates.remind_method));
+    }
+
+    return {
+      success: true,
+      message: "Note updated successfully.",
+      data: updated,
+    };
+  } catch (error) {
+    console.error("Error in editTask:", error);
+    return {
+      success: false,
+      message: "An unexpected error occurred.",
+    };
+  }
 }
