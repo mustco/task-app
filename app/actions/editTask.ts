@@ -135,14 +135,12 @@ export async function editTask(formData: FormData) {
     target_phone: d.showReminder ? d.target_phone || null : null,
   };
 
-  // update
-  const { data: updated, error: upErr } = await supabase
+  // update (tanpa .select() biar gak extra round-trip)
+  const { error: upErr } = await supabase
     .from("tasks")
     .update(updates)
     .eq("id", taskId)
-    .eq("user_id", user.id)
-    .select()
-    .single();
+    .eq("user_id", user.id);
 
   if (upErr) {
     const msg = upErr.message?.includes("row-level security")
@@ -150,6 +148,14 @@ export async function editTask(formData: FormData) {
       : upErr.message || "Update failed.";
     return { success: false, message: msg };
   }
+
+  // synthesize object updated untuk UI
+  const updated = {
+    ...oldTask,
+    ...updates,
+    id: oldTask.id,
+    user_id: oldTask.user_id,
+  };
 
   // cek perubahan yang berpengaruh ke reminder
   const reminderChanged =
@@ -161,7 +167,6 @@ export async function editTask(formData: FormData) {
 
   // kalau berubah → panggil /api/reschedule-reminder dengan host dari header (CARA B)
   if (reminderChanged) {
-    // Build absolute URL dari header reverse proxy (kompatibel Netlify)
     const h = headers();
     const host = h.get("x-forwarded-host") || h.get("host");
     const proto = h.get("x-forwarded-proto") || "https";
@@ -188,13 +193,9 @@ export async function editTask(formData: FormData) {
           console.error(
             `Error in background reschedule: ${response.status} - ${errorBody}`
           );
-          // (opsional) tampilkan ke user:
-          // return { success: false, message: "Task updated, but failed to reschedule reminder." };
         }
       } catch (err) {
         console.error("Background reminder rescheduling failed:", err);
-        // (opsional) reflect failure
-        // return { success: false, message: "Task updated, but failed to reschedule reminder." };
       }
     } else {
       console.error("Unable to resolve host for reschedule-reminder call.");

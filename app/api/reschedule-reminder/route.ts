@@ -39,7 +39,8 @@ async function cancelTriggerHandle(handleId: string): Promise<boolean> {
         Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(5000),
+      // dipercepat: dari 5000 -> 1200 ms
+      signal: AbortSignal.timeout(1200),
     });
     if (response.ok) {
       console.log(`✅ Successfully cancelled trigger ${handleId} using ${url}`);
@@ -52,7 +53,7 @@ async function cancelTriggerHandle(handleId: string): Promise<boolean> {
     }
   } catch (error: any) {
     if (error.name === "AbortError")
-      console.error(`Timeout when trying to cancel trigger ${handleId}.`);
+      console.warn(`Cancel trigger timeout for ${handleId} (skip, continue).`);
     else
       console.error(`Error cancelling trigger ${handleId} with ${url}:`, error);
     return false;
@@ -61,7 +62,7 @@ async function cancelTriggerHandle(handleId: string): Promise<boolean> {
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Validasi Input Body
+    // 1) Validasi body
     const body = await request.json();
     const validationResult = RescheduleReminderSchema.safeParse(body);
     if (!validationResult.success) {
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
     const { taskId, hasReminder } = validationResult.data;
 
-    // 2. Autentikasi Pengguna
+    // 2) Autentikasi
     const supabase = await createClient();
     const {
       data: { user },
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 3. Ambil task + user
+    // 3) Ambil task + user
     const { data: task, error: fetchError } = await supabase
       .from("tasks")
       .select(
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Otorisasi
+    // 4) Otorisasi
     if (task.user_id !== user.id) {
       console.warn(
         `User ${user.id} attempted to reschedule reminder for task ${taskId} belonging to user ${task.user_id}`
@@ -123,7 +124,7 @@ export async function POST(request: NextRequest) {
 
     let cancelResult = { success: false, attempted: false };
 
-    // 5. HAPUS JADWAL LAMA
+    // 5) Hapus jadwal lama (cepat)
     if (task.trigger_handle_id) {
       cancelResult.attempted = true;
       console.log(
@@ -164,7 +165,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // 6. Siapkan kontak tujuan (dengan normalisasi E.164 untuk WhatsApp)
+      // 6) Siapkan kontak (format WhatsApp: 62xxxxxxxxxx)
       let recipientEmail: string | undefined;
       let recipientPhone: string | undefined;
 
@@ -183,7 +184,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Normalisasi & validasi nomor telepon → E.164 (+62...)
       if (recipientPhone) {
         recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
         if (recipientPhone.startsWith("0")) {
@@ -196,6 +196,7 @@ export async function POST(request: NextRequest) {
           // misal 812xxx -> 62812xxx
           recipientPhone = "62" + recipientPhone;
         }
+        // validasi: 62 + 8..13 digit berikutnya
         if (!/^62\d{8,13}$/.test(recipientPhone)) {
           return NextResponse.json(
             { error: "Invalid WhatsApp number format (must start with 62...)" },
@@ -204,8 +205,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-
-      // Validasi Ketersediaan Kontak
+      // Ketersediaan kontak
       if (task.remind_method === "email" && !recipientEmail) {
         return NextResponse.json(
           { error: "No valid email address found for email reminder." },
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validasi `reminder_days`
+      // Validasi reminder_days
       if (task.reminder_days < 0 || task.reminder_days > 365) {
         return NextResponse.json(
           { error: "Reminder days must be between 0 and 365." },
@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
       const reminderTimestamp =
         deadlineDate.getTime() - task.reminder_days * 24 * 60 * 60 * 1000;
 
-      // Izinkan jadwal "sekarang persis" (ubah <= menjadi <)
+      // Izinkan "tepat sekarang", tolak kalau sudah lewat
       if (reminderTimestamp < Date.now()) {
         return NextResponse.json(
           {
@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
       console.log("hasReminder is false. No new reminder will be scheduled.");
     }
 
-    // 7. UPDATE TRIGGER_HANDLE_ID DI DATABASE
+    // 7) Update trigger_handle_id
     const { error: updateError } = await supabaseAdmin
       .from("tasks")
       .update({ trigger_handle_id: newTriggerHandleId })
