@@ -70,14 +70,6 @@ const getStr = (fd: FormData, key: string) => {
   return v == null ? undefined : String(v);
 };
 
-function getBaseUrl() {
-  const origin = headers().get("origin");
-  if (origin) return origin;
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL!;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return "http://localhost:3000";
-}
-
 export async function editTask(formData: FormData) {
   const supabase = await createClient();
 
@@ -167,39 +159,45 @@ export async function editTask(formData: FormData) {
     (oldTask.target_phone ?? null) !== (updates.target_phone ?? null) ||
     new Date(oldTask.deadline).toISOString() !== updates.deadline;
 
-  // kalau berubah → panggil /api/reschedule-reminder dengan Cookie
+  // kalau berubah → panggil /api/reschedule-reminder dengan host dari header (CARA B)
   if (reminderChanged) {
-    const base = getBaseUrl();
-    const cookieHeader = cookies().toString();
-    const url = new URL("/api/reschedule-reminder", base).toString();
+    // Build absolute URL dari header reverse proxy (kompatibel Netlify)
+    const h = headers();
+    const host = h.get("x-forwarded-host") || h.get("host");
+    const proto = h.get("x-forwarded-proto") || "https";
+    if (host) {
+      const url = `${proto}://${host}/api/reschedule-reminder`;
+      const cookieHeader = cookies().toString();
 
-    // AWAIT the fetch call to ensure it completes
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Cookie: cookieHeader,
-        },
-        body: JSON.stringify({
-          taskId,
-          hasReminder: Boolean(updates.remind_method),
-        }),
-        cache: "no-store",
-      });
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: cookieHeader,
+          },
+          body: JSON.stringify({
+            taskId,
+            hasReminder: Boolean(updates.remind_method),
+          }),
+          cache: "no-store",
+        });
 
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.error(
-          `Error in background reschedule: ${response.status} - ${errorBody}`
-        );
-        // Optionally, you can reflect this failure back to the user
+        if (!response.ok) {
+          const errorBody = await response.text();
+          console.error(
+            `Error in background reschedule: ${response.status} - ${errorBody}`
+          );
+          // (opsional) tampilkan ke user:
+          // return { success: false, message: "Task updated, but failed to reschedule reminder." };
+        }
+      } catch (err) {
+        console.error("Background reminder rescheduling failed:", err);
+        // (opsional) reflect failure
         // return { success: false, message: "Task updated, but failed to reschedule reminder." };
       }
-    } catch (err) {
-      console.error("Background reminder rescheduling failed:", err);
-      // Optionally, reflect failure to the user
-      // return { success: false, message: "Task updated, but failed to reschedule reminder." };
+    } else {
+      console.error("Unable to resolve host for reschedule-reminder call.");
     }
   }
 

@@ -1,4 +1,4 @@
-// app/api/reschedule-reminder/route.ts (FINAL - HANYA LOGIKA KONTAK YANG DIUBAH)
+// app/api/reschedule-reminder/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { scheduleTaskReminder } from "../../../src/trigger/task";
@@ -12,8 +12,6 @@ const RescheduleReminderSchema = z.object({
   hasReminder: z.boolean(),
 });
 
-// ✅ PERUBAHAN 1: Interface disesuaikanAdnan0111710
-
 interface TaskWithUser {
   id: string;
   user_id: string;
@@ -22,8 +20,8 @@ interface TaskWithUser {
   deadline: string;
   reminder_days: number;
   remind_method: "email" | "whatsapp" | "both" | null;
-  target_email: string | null; // Kolom baru
-  target_phone: string | null; // Kolom baru
+  target_email: string | null;
+  target_phone: string | null;
   trigger_handle_id?: string | null;
   users: {
     name: string;
@@ -88,14 +86,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // ✅ PERUBAHAN 2: Query select disesuaikan
+    // 3. Ambil task + user
     const { data: task, error: fetchError } = await supabase
       .from("tasks")
       .select(
         `
         id, title, description, deadline, reminder_days, user_id,
         remind_method, target_email, target_phone, trigger_handle_id,
-        users(name, email, phone_number) 
+        users(name, email, phone_number)
         `
       )
       .eq("id", taskId)
@@ -166,7 +164,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // ✅ PERUBAHAN 3: Logika kontak disederhanakan secara total
+      // 6. Siapkan kontak tujuan (dengan normalisasi E.164 untuk WhatsApp)
       let recipientEmail: string | undefined;
       let recipientPhone: string | undefined;
 
@@ -174,7 +172,8 @@ export async function POST(request: NextRequest) {
         recipientEmail = task.target_email || userDetails.email;
       }
       if (task.remind_method === "whatsapp" || task.remind_method === "both") {
-        recipientPhone = task.target_phone || userDetails.phone_number;
+        recipientPhone =
+          task.target_phone || userDetails.phone_number || undefined;
       }
 
       if (recipientEmail && !validator.isEmail(recipientEmail)) {
@@ -183,19 +182,35 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+
+      // Normalisasi & validasi nomor telepon → E.164 (+62...)
       if (recipientPhone) {
-        if (!/^\+?\d{8,15}$/.test(recipientPhone)) {
+        recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
+        if (recipientPhone.startsWith("0")) {
+          // 08xxxx -> +62xxxx
+          recipientPhone = "+62" + recipientPhone.slice(1);
+        } else if (recipientPhone.startsWith("62")) {
+          // 62xxxx -> +62xxxx
+          recipientPhone = "+" + recipientPhone;
+        } else if (!recipientPhone.startsWith("+")) {
+          // Kalau hanya angka (misal 812xxxx), jadikan +812xxxx (lebih baik user isi kode negara)
+          if (/^\d{8,15}$/.test(recipientPhone)) {
+            recipientPhone = "+" + recipientPhone;
+          }
+        }
+
+        if (!/^\+\d{8,15}$/.test(recipientPhone)) {
           return NextResponse.json(
-            { error: "Invalid WhatsApp phone number for reminder." },
+            {
+              error:
+                "Invalid WhatsApp phone number for reminder (use E.164, e.g. +62812xxxx).",
+            },
             { status: 400 }
           );
         }
-        if (recipientPhone.startsWith("0")) {
-          recipientPhone = "62" + recipientPhone.substring(1);
-        }
       }
 
-      // Validasi Akhir untuk Ketersediaan Kontak
+      // Validasi Ketersediaan Kontak
       if (task.remind_method === "email" && !recipientEmail) {
         return NextResponse.json(
           { error: "No valid email address found for email reminder." },
@@ -234,7 +249,8 @@ export async function POST(request: NextRequest) {
       const reminderTimestamp =
         deadlineDate.getTime() - task.reminder_days * 24 * 60 * 60 * 1000;
 
-      if (new Date(reminderTimestamp).getTime() <= new Date().getTime()) {
+      // Izinkan jadwal "sekarang persis" (ubah <= menjadi <)
+      if (reminderTimestamp < Date.now()) {
         return NextResponse.json(
           {
             error:
