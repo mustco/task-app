@@ -277,10 +277,22 @@ export function AddTaskDialog({
       toast({ title: "Success", description: "Note created successfully." });
     } catch (error: any) {
       console.error("Error creating task:", error);
+
+      // ✅ DI SINI LOGIKANYA DITAMBAHKAN
+      let description = "Failed to create note. Please try again."; // Pesan default
+
+      if (error.message.includes("violates row-level security policy")) {
+        // Jika ini adalah error RLS, ganti pesannya menjadi lebih ramah
+        description =
+          "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda.";
+      } else {
+        // Jika error lain, gunakan pesan error aslinya
+        description = error.message || description;
+      }
+
       toast({
         title: "Error",
-        description:
-          error.message || "Failed to create note. Please try again.",
+        description: description, // <-- Gunakan pesan yang sudah kita siapkan
         variant: "destructive",
       });
     } finally {

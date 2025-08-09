@@ -344,13 +344,25 @@ export function EditTaskDialog({
       onOpenChange(false);
       toast({ title: "Success", description: "Note updated successfully." });
     } catch (error: any) {
-      console.error("Error updating task:", error);
-      toast({
-        title: "Error",
-        description:
-          error.message || "Failed to update note. Please try again.",
-        variant: "destructive",
-      });
+       console.error("Error creating task:", error);
+
+       // ✅ DI SINI LOGIKANYA DITAMBAHKAN
+       let description = "Failed to create note. Please try again."; // Pesan default
+
+       if (error.message.includes("violates row-level security policy")) {
+         // Jika ini adalah error RLS, ganti pesannya menjadi lebih ramah
+         description =
+           "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda.";
+       } else {
+         // Jika error lain, gunakan pesan error aslinya
+         description = error.message || description;
+       }
+
+       toast({
+         title: "Error",
+         description: description, // <-- Gunakan pesan yang sudah kita siapkan
+         variant: "destructive",
+       });
     } finally {
       setLoading(false);
     }

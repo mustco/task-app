@@ -8,6 +8,7 @@ export interface User {
   name?: string | null; // Mark as nullable because it might be null in DB
   role: "user" | "admin";
   status: "active" | "suspended";
+  is_premium?: boolean; // Optional field for premium status
   // Add other user properties from your DB here, marked as optional/nullable as needed
   // subscription_plan?: "free" | "premium" | null;
   // subscription_status?: "active" | "cancelled" | "expired" | null;

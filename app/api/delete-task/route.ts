@@ -81,7 +81,7 @@ export async function DELETE(request: NextRequest) {
     if (task.trigger_handle_id) {
       try {
         const triggerCancelResponse = await fetch(
-          `${process.env.TRIGGER_API_URL}/api/v2/runs/${task.trigger_handle_id}/cancel`,
+          `https://api.trigger.dev/api/v2/runs/${task.trigger_handle_id}/cancel`,
           {
             method: "POST",
             headers: {

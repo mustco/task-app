@@ -21,7 +21,7 @@ export default async function ProfilePage() {
     .select("*")
     .eq("id", user.id)
     .single();
-
+  // console.log("User Profile:", userProfile);
   return (
     <DashboardLayout user={userProfile}>
       <div className="space-y-6">
