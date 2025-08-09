@@ -1,18 +1,27 @@
-// app/api/schedule-reminder/route.ts
+// app/api/schedule-reminder/route.ts (FINAL - HANYA LOGIKA KONTAK YANG DIUBAH)
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { scheduleTaskReminder } from "../../../src/trigger/task";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+import { z } from "zod";
+import validator from "validator";
 
-// Interface diperbarui untuk menyertakan remind_method
+const ScheduleReminderSchema = z.object({
+  taskId: z.string().uuid("Invalid taskId format. Must be a UUID."),
+});
+
+// ✅ PERUBAHAN 1: Interface disesuaikan
 interface TaskWithUser {
   id: string;
+  user_id: string;
   title: string;
   description?: string;
   deadline: string;
   reminder_days: number;
   remind_method: "email" | "whatsapp" | "both";
-  target_contact?: string;
+  target_email: string | null; // Kolom baru
+  target_phone: string | null; // Kolom baru
   users: {
     name: string;
     email: string;
@@ -20,128 +29,167 @@ interface TaskWithUser {
   } | null;
 }
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
 export async function POST(request: NextRequest) {
   try {
-    const { taskId } = await request.json();
-    if (!taskId) {
+    // 1. Validasi Input Body (Tidak ada perubahan)
+    const body = await request.json();
+    const validationResult = ScheduleReminderSchema.safeParse(body);
+
+    if (!validationResult.success) {
       return NextResponse.json(
-        { error: "taskId is required" },
+        {
+          error: "Invalid request payload",
+          details: validationResult.error.flatten().fieldErrors,
+        },
         { status: 400 }
       );
     }
+    const { taskId } = validationResult.data;
 
-    // Ambil data task dan user, termasuk nomor telepon
-    const { data: task, error } = await supabase
+    // 2. Autentikasi Pengguna (Tidak ada perubahan)
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+    if (authError || !user) {
+      console.error("Authentication error:", authError);
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // ✅ PERUBAHAN 2: Query select disesuaikan
+    const { data: task, error: fetchError } = await supabase
       .from("tasks")
       .select(
         `
-        id, title, description, deadline, reminder_days,
+        id, title, description, deadline, reminder_days, user_id,
         remind_method, 
-        target_contact,
+        target_email, 
+        target_phone,
         users(name, email, phone_number) 
-      `
+        `
       )
       .eq("id", taskId)
       .single<TaskWithUser>();
 
-    if (error || !task) {
-      console.error("Supabase error:", error);
+    if (fetchError || !task) {
+      console.error("Supabase fetch error:", fetchError);
       return NextResponse.json(
-        { error: "Task not found or failed to fetch" },
+        { error: "Task not found or you do not have permission to access it." },
         { status: 404 }
       );
     }
 
-    const user = task.users;
-    if (!user) {
+    // 4. Otorisasi (Tidak ada perubahan)
+    if (task.user_id !== user.id) {
+      console.warn(
+        `User ${user.id} attempted to access task ${taskId} belonging to user ${task.user_id}`
+      );
       return NextResponse.json(
-        { error: "Task has no associated user" },
+        {
+          error:
+            "Forbidden: You do not have permission to schedule a reminder for this task.",
+        },
+        { status: 403 }
+      );
+    }
+    const userDetails = task.users;
+    if (!userDetails) {
+      return NextResponse.json(
+        { error: "Task has no associated user details." },
         { status: 404 }
       );
     }
 
-    const userName = user.name || "User";
-    const userEmail = user.email;
-    // Normalisasi nomor telepon
-    const userPhone = user.phone_number?.startsWith("0")
-      ? "62" + user.phone_number.substring(1)
-      : user.phone_number;
-
-    // --- LOGIKA BARU BERDASARKAN REMIND_METHOD ---
+    // ✅ PERUBAHAN 3: Logika kontak disederhanakan secara total
     let recipientEmail: string | undefined;
     let recipientPhone: string | undefined;
 
-    if (task.remind_method === "email") {
-      // Untuk email only: gunakan target_contact jika ada, jika tidak gunakan user email
-      recipientEmail = task.target_contact || userEmail;
-      recipientPhone = undefined;
-    } else if (task.remind_method === "whatsapp") {
-      // Untuk whatsapp only: gunakan target_contact jika ada, jika tidak gunakan user phone
-      recipientEmail = undefined;
-      recipientPhone = task.target_contact || userPhone;
-    } else if (task.remind_method === "both") {
-      // Untuk both: pisahkan dari target_contact yang formatnya "email|whatsapp"
-      if (task.target_contact && task.target_contact.includes("|")) {
-        const [emailPart, whatsappPart] = task.target_contact.split("|");
-        recipientEmail = emailPart.trim() || userEmail;
-        recipientPhone = whatsappPart.trim() || userPhone;
-      } else {
-        // Fallback jika format tidak sesuai
-        recipientEmail = userEmail;
-        recipientPhone = userPhone;
+    // Ambil kontak dari task, atau fallback ke profil user jika tidak ada
+    if (task.remind_method === "email" || task.remind_method === "both") {
+      recipientEmail = task.target_email || userDetails.email;
+    }
+    if (task.remind_method === "whatsapp" || task.remind_method === "both") {
+      recipientPhone = task.target_phone || userDetails.phone_number;
+    }
+
+    // Validasi dan normalisasi setelah mendapatkan nilainya
+    if (recipientEmail && !validator.isEmail(recipientEmail)) {
+      return NextResponse.json(
+        { error: "Invalid email address for reminder." },
+        { status: 400 }
+      );
+    }
+    if (recipientPhone) {
+      if (!/^\+?\d{8,15}$/.test(recipientPhone)) {
+        return NextResponse.json(
+          { error: "Invalid WhatsApp phone number for reminder." },
+          { status: 400 }
+        );
+      }
+      // Normalisasi nomor telepon
+      if (recipientPhone.startsWith("0")) {
+        recipientPhone = "62" + recipientPhone.substring(1);
       }
     }
 
-    // Normalisasi nomor telepon jika ada
-    if (recipientPhone) {
-      recipientPhone = recipientPhone.startsWith("0")
-        ? "62" + recipientPhone.substring(1)
-        : recipientPhone;
-    }
-
-    // Validasi: pastikan ada kontak yang valid sesuai dengan remind_method
+    // 5. Validasi Akhir untuk Ketersediaan Kontak (Tidak ada perubahan)
     if (task.remind_method === "email" && !recipientEmail) {
       return NextResponse.json(
         { error: "No valid email address found for email reminder." },
         { status: 400 }
       );
     }
-
     if (task.remind_method === "whatsapp" && !recipientPhone) {
       return NextResponse.json(
         { error: "No valid phone number found for WhatsApp reminder." },
         { status: 400 }
       );
     }
-
     if (task.remind_method === "both" && (!recipientEmail || !recipientPhone)) {
       return NextResponse.json(
         {
           error:
-            "Valid email and phone number are required for both reminders.",
+            "Valid email and phone number are required for both reminder methods.",
         },
         { status: 400 }
       );
     }
 
-    const firstName = userName.split(" ")[0] || "User";
+    // 6. Validasi `reminder_days` (Tidak ada perubahan)
+    if (task.reminder_days < 0 || task.reminder_days > 365) {
+      return NextResponse.json(
+        { error: "Reminder days must be between 0 and 365." },
+        { status: 400 }
+      );
+    }
 
-    // Schedule reminder
+    const firstName = (userDetails.name || "User").split(" ")[0];
+
+    // 7. Jadwalkan Pengingat (Tidak ada perubahan)
     const handle = await scheduleTaskReminder({
       id: task.id,
       title: task.title,
       description: task.description,
       deadline: task.deadline,
       reminderDays: task.reminder_days,
-      recipientEmail: recipientEmail || "", // Berikan string kosong jika undefined
+      recipientEmail: recipientEmail || "",
       recipientPhone: recipientPhone,
       firstName: firstName,
     });
+
+    // 8. Simpan trigger_handle_id (Tidak ada perubahan)
+    const { error: updateError } = await supabaseAdmin
+      .from("tasks")
+      .update({ trigger_handle_id: handle.id })
+      .eq("id", task.id);
+
+    if (updateError) {
+      console.error(
+        `Failed to save trigger_handle_id for task ${task.id}:`,
+        updateError
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -157,7 +205,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("Error scheduling reminder:", error);
     return NextResponse.json(
-      { error: "Failed to schedule reminder", details: error.message },
+      { error: "Failed to schedule reminder due to an internal server error." },
       { status: 500 }
     );
   }

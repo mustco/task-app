@@ -1,8 +1,6 @@
 "use client";
 
-import type React from "react";
-
-import { useState } from "react";
+import React, { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -16,47 +14,46 @@ interface ProfileFormProps {
 }
 
 export function ProfileForm({ user }: ProfileFormProps) {
+  const supabase = createClient();
+  const { toast } = useToast();
+
+  // Form state
+  const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState(user?.phone_number || "");
+  const [isPremium, setIsPremium] = useState(user?.is_premium || false);
+
   const [loading, setLoading] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
-  const { toast } = useToast();
-  const supabase = createClient();
-  // Add name and subscription fields to the form
-  const [name, setName] = useState(user?.name || "");
 
-  // Update the handleUpdateEmail function to also update name:
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // Update auth user
-      const { error: authError } = await supabase.auth.updateUser({
-        email: email,
-        data: { name: name },
-      });
-
-      if (authError) throw authError;
-
-      // Update profile in users table
       const { error: profileError } = await supabase
         .from("users")
-        .update({ name: name, email: email })
+        .update({
+          name,
+          email,
+          phone_number: phoneNumber,
+          is_premium: isPremium,
+        })
         .eq("id", user?.id);
 
       if (profileError) throw profileError;
 
       toast({
         title: "Success",
-        description: "Profile updated successfully",
+        description: "Profile updated successfully.",
       });
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Failed to update profile.",
         variant: "destructive",
       });
     } finally {
@@ -87,17 +84,15 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       toast({
         title: "Success",
-        description: "Password updated successfully",
+        description: "Password updated successfully.",
       });
 
-      // Clear password fields
-      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || "Failed to update password.",
         variant: "destructive",
       });
     } finally {
@@ -107,36 +102,17 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
   return (
     <div className="space-y-6">
+      {/* Profile Info */}
       <Card>
         <CardHeader>
           <CardTitle>Account Information</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleUpdateProfile} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email Address</Label>
-              <Input
-                className="!border !border-gray-300 !bg-white !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            {/* Add name field to the Account Information form: */}
+            {/* Name */}
             <div>
               <Label htmlFor="name">Full Name</Label>
               <Input
-                className="!border !border-gray-300 !bg-white !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
                 id="name"
                 type="text"
                 value={name}
@@ -144,30 +120,44 @@ export function ProfileForm({ user }: ProfileFormProps) {
                 required
               />
             </div>
+
+            {/* Email */}
             <div>
-              <Label>Role</Label>
+              <Label htmlFor="email">Email (For Reminder)</Label>
               <Input
-                value={user?.role || ""}
-                disabled
-                className="bg-gray-50 !border !border-gray-300  !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
               />
             </div>
+
+            {/* Phone Number */}
             <div>
-              <Label>Status</Label>
+              <Label htmlFor="phone">Phone Number (For Reminder)</Label>
               <Input
-                value={user?.status || ""}
-                disabled
-                className="bg-gray-50 !border !border-gray-300 !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
+                id="phone"
+                type="tel"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
               />
             </div>
+
+            {/* Premium */}
+            <div>
+              <Label htmlFor="premium">Premium</Label>
+              <select
+                id="premium"
+                value={isPremium ? "true" : "false"}
+                onChange={(e) => setIsPremium(e.target.value === "true")}
+                className="bg-white border border-gray-300 text-black rounded-md px-3 py-2"
+              >
+                <option value="false">False</option>
+                <option value="true">True</option>
+              </select>
+            </div>
+
             <Button type="submit" disabled={loading}>
               {loading ? "Updating..." : "Update Profile"}
             </Button>
@@ -175,6 +165,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
         </CardContent>
       </Card>
 
+      {/* Password Section */}
       <Card>
         <CardHeader>
           <CardTitle>Change Password</CardTitle>
@@ -184,11 +175,6 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <div>
               <Label htmlFor="newPassword">New Password</Label>
               <Input
-                className="!border !border-gray-300 !bg-white !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
                 id="newPassword"
                 type="password"
                 value={newPassword}
@@ -196,14 +182,10 @@ export function ProfileForm({ user }: ProfileFormProps) {
                 required
               />
             </div>
+
             <div>
               <Label htmlFor="confirmPassword">Confirm New Password</Label>
               <Input
-                className="!border !border-gray-300 !bg-white !text-black 
-             focus:!border-gray-500 focus:!ring-0 
-             !ring-0 !ring-offset-0 !shadow-none 
-             !outline-none !rounded-md 
-             placeholder:text-gray-400"
                 id="confirmPassword"
                 type="password"
                 value={confirmPassword}
@@ -211,6 +193,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
                 required
               />
             </div>
+
             <Button type="submit" disabled={passwordLoading}>
               {passwordLoading ? "Updating..." : "Update Password"}
             </Button>
