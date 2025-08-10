@@ -13,7 +13,7 @@ dayjs.extend(tzPlugin);
 const DEFAULT_TZ = process.env.DEFAULT_TZ || "Asia/Jakarta";
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-// ---------- Schema (lebih toleran) ----------
+// ---------- Schema: dua mode (reminder | chat) ----------------------------
 const iso = z
   .string()
   .refine(
@@ -21,24 +21,34 @@ const iso = z
     "Invalid datetime"
   );
 
-const schema = z.object({
-  intent: z.enum(["create_reminder", "unknown"]),
+const reminder = z.object({
+  mode: z.literal("reminder"),
+  intent: z.literal("create_reminder"),
   title: z.string().min(1).max(120),
   event_time: iso.optional(),
   remind_time: iso,
   tz: z.string().default(DEFAULT_TZ),
   notes: z.string().optional(),
   confidence: z.number().min(0).max(1),
-  needs_clarification: z.string().optional(),
 });
 
-// ---------- Helper: konversi teks tanggal Indonesia → ISO ----------
+const chat = z.object({
+  mode: z.literal("chat"),
+  intent: z.literal("chitchat"),
+  reply: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+});
+
+const schema = z.discriminatedUnion("mode", [reminder, chat]);
+
+// ---------- Helper: konversi teks tanggal ID → ISO ------------------------
 function toISO(input?: string, now = dayjs().tz(DEFAULT_TZ)) {
   if (!input) return undefined;
   const t = input.toLowerCase().trim();
 
-  // relatif: besok / lusa
-  const rel = /(besok|lusa)/.exec(t)?.[1];
+  // terima besok/bsok/lusa
+  const relWord = /(besok|bsok|lusa)/.exec(t)?.[1];
+  const rel = relWord === "bsok" ? "besok" : relWord;
   const relBase =
     rel === "besok"
       ? now.add(1, "day")
@@ -46,47 +56,63 @@ function toISO(input?: string, now = dayjs().tz(DEFAULT_TZ)) {
         ? now.add(2, "day")
         : undefined;
 
-  // jam (7 / 07:30 / 7.30)
+  // jam (7 / 07:30 / 7.30) + meridiem lokal
   const time = /jam\s*(\d{1,2})(?:[:.](\d{1,2}))?/.exec(t);
+  const mer = /(pagi|siang|sore|malam)/.exec(t)?.[1] as
+    | "pagi"
+    | "siang"
+    | "sore"
+    | "malam"
+    | undefined;
   const hh = time ? Number(time[1]) : undefined;
   const mm = time ? Number(time[2] || 0) : undefined;
 
-  // format absolut “28 Agustus 2025 07:00”, “28/08/2025 07:00”, “28 Agustus 07:00”
+  function applyMeridiem(d: dayjs.Dayjs) {
+    if (!mer) return d;
+    let h = d.hour();
+    // jika user tulis 7 malam → 19
+    if (mer === "pagi") h = h % 12; // 0–11
+    if (mer === "siang") h = h === 12 ? 12 : (h % 12) + 12; // sekitar 12–15
+    if (mer === "sore") h = (h % 12) + 12; // 15–18
+    if (mer === "malam") h = (h % 12) + 12; // 18–23
+    return d.hour(h);
+  }
+
+  // absolut (ID locale)
   const candidates = [
     "D MMMM YYYY HH:mm",
     "D MMMM YYYY H:mm",
     "DD/MM/YYYY HH:mm",
     "DD/MM/YYYY H:mm",
-    "D MMMM HH:mm", // tanpa tahun → anggap tahun ini
+    "D MMMM HH:mm",
     "D MMMM H:mm",
-    "D MMMM YYYY", // tanpa jam
+    "D MMMM YYYY",
     "DD/MM/YYYY",
   ];
 
   let d: dayjs.Dayjs | undefined;
 
-  // 1) absolute dengan locale Indonesia
   for (const fmt of candidates) {
     const parsed = dayjs(input, fmt, "id").tz(DEFAULT_TZ);
     if (parsed.isValid()) {
       d = parsed;
-      // jika format tanpa tahun → pakai tahun sekarang
       if (!/Y/.test(fmt)) d = d.year(now.year());
-      // jika format tanpa jam → default 09:00
       if (!/H/.test(fmt)) d = d.hour(9).minute(0).second(0);
+      d = applyMeridiem(d);
       break;
     }
   }
 
-  // 2) relatif + jam
+  // relatif + jam
   if (!d && relBase && hh != null) {
     d = relBase
       .hour(hh)
       .minute(mm || 0)
       .second(0);
+    d = applyMeridiem(d);
   }
 
-  // 3) hanya nama hari (minggu/senin/…)
+  // nama hari (boleh tanpa kata "hari")
   if (!d) {
     const hari = /(minggu|senin|selasa|rabu|kamis|jumat|jum'at|sabtu)/.exec(
       t
@@ -104,58 +130,64 @@ function toISO(input?: string, now = dayjs().tz(DEFAULT_TZ)) {
       };
       const target = map[hari];
       let base = now;
-      // cari occurrence berikutnya
       while (base.day() !== target) base = base.add(1, "day");
       d = base
         .hour(hh ?? 9)
         .minute(mm ?? 0)
         .second(0);
+      d = applyMeridiem(d);
     }
   }
 
-  // 4) fallback hanya HH:mm → pakai hari ini
+  // fallback hanya HH:mm → pakai hari ini
   if (!d && hh != null) {
     d = now
       .hour(hh)
       .minute(mm || 0)
       .second(0);
+    d = applyMeridiem(d);
   }
 
   return d?.isValid() ? d.toDate().toISOString() : undefined;
 }
 
-// ---------- Gemini: paksa output JSON ----------
-async function extractWithGemini(text: string, nowISO: string) {
+// ---------- Gemini: router reminder/chat -----------------------------------
+async function runGemini(text: string, nowISO: string) {
   const { GoogleGenerativeAI } = await import("@google/generative-ai");
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
   const model = genAI.getGenerativeModel({
     model: MODEL,
-    generationConfig: {
-      responseMimeType: "application/json", // JSON murni
-    },
+    generationConfig: { responseMimeType: "application/json" },
   });
 
   const SYS = `
-Kamu adalah parser pengingat berbahasa Indonesia.
-Keluarkan JSON murni (tanpa markdown/penjelasan). Gunakan ISO 8601 RFC3339 lengkap (contoh 2025-08-28T07:00:00+07:00).
-Field: intent("create_reminder"|"unknown"), title, event_time(optional ISO), remind_time(ISO), tz("${DEFAULT_TZ}"), confidence(0..1), needs_clarification(optional).
-Jika kurang info, isi intent="unknown" dan needs_clarification.`;
+Kamu adalah NLU + chatbot bahasa Indonesia.
+KELUARKAN JSON MURNI (tanpa markdown).
+Dua kemungkinan keluaran:
+1) {"mode":"reminder","intent":"create_reminder","title":"...","event_time":"ISO optional","remind_time":"ISO","tz":"${DEFAULT_TZ}","confidence":0..1}
+2) {"mode":"chat","intent":"chitchat","reply":"balasan natural ke user","confidence":0..1}
+
+Aturan:
+- Pahami bahasa sehari-hari, termasuk typo umum (besok/bsok), "lusa", nama hari tanpa "hari".
+- Mengerti "pagi/siang/sore/malam".
+- Jika kalimat TIDAK mengandung permintaan pengingat, pilih mode "chat".
+- Gunakan ISO 8601 lengkap dengan offset zona.`;
 
   const prompt = [
     SYS,
-    `NOW (ISO): ${nowISO}`,
-    `TZ DEFAULT: ${DEFAULT_TZ}`,
+    `NOW: ${nowISO} (${DEFAULT_TZ})`,
     `USER: ${text}`,
-    `Contoh keluaran: {"intent":"create_reminder","title":"meeting","event_time":"2025-06-02T08:00:00+07:00","remind_time":"2025-06-02T07:00:00+07:00","tz":"${DEFAULT_TZ}","confidence":0.9}`,
+    `Contoh reminder: {"mode":"reminder","intent":"create_reminder","title":"rapat online","event_time":"2025-08-11T08:00:00+07:00","remind_time":"2025-08-11T07:00:00+07:00","tz":"${DEFAULT_TZ}","confidence":0.9}`,
+    `Contoh chat: {"mode":"chat","intent":"chitchat","reply":"Siap, ada yang bisa kubantu?","confidence":0.9}`,
   ].join("\n");
 
   const resp = await model.generateContent(prompt);
-  const json = resp.response.text(); // sudah JSON
+  const json = resp.response.text(); // sudah berupa JSON
   return JSON.parse(json);
 }
 
-// ---------- Handler ----------
+// ---------- Handler --------------------------------------------------------
 export async function POST(req: NextRequest) {
   try {
     const { text, tz = DEFAULT_TZ } = await req.json();
@@ -164,22 +196,40 @@ export async function POST(req: NextRequest) {
 
     const nowISO = dayjs().tz(tz).toDate().toISOString();
 
-    let raw = await extractWithGemini(text, nowISO);
+    let raw = await runGemini(text, nowISO);
 
-    // Coerce: pastikan waktu ISO kalau model masih kasih teks
-    if (!raw?.remind_time || Number.isNaN(Date.parse(raw.remind_time))) {
-      raw.remind_time =
-        toISO(raw.remind_time ?? text, dayjs(nowISO).tz(tz)) ||
-        toISO(text, dayjs(nowISO).tz(tz));
+    // Jika mode reminder → paksa waktu valid + fallback title
+    if (raw?.mode === "reminder") {
+      if (!raw?.remind_time || Number.isNaN(Date.parse(raw.remind_time))) {
+        raw.remind_time =
+          toISO(raw.remind_time ?? text, dayjs(nowISO).tz(tz)) ||
+          toISO(text, dayjs(nowISO).tz(tz));
+      }
+      if (raw?.event_time && Number.isNaN(Date.parse(raw.event_time))) {
+        const coerced = toISO(raw.event_time, dayjs(nowISO).tz(tz));
+        if (coerced) raw.event_time = coerced;
+        else delete raw.event_time;
+      }
+      if (!raw?.title || !raw.title.trim()) {
+        raw.title =
+          text
+            .replace(/\b(ingat(?:kan)?|tolong ingat(?:kan)?)\b/gi, "")
+            .replace(
+              /\b(hari\s+)?(minggu|senin|selasa|rabu|kamis|jum'?at|sabtu|depan)\b/gi,
+              ""
+            )
+            .replace(
+              /jam\s*\d{1,2}([:.]\d{1,2})?\s*(pagi|siang|sore|malam)?/gi,
+              ""
+            )
+            .replace(/\b(besok|bsok|lusa)\b/gi, "")
+            .replace(/\s+/g, " ")
+            .trim() || "Pengingat";
+      }
+      raw.tz = tz;
     }
-    if (raw?.event_time && Number.isNaN(Date.parse(raw.event_time))) {
-      const coerced = toISO(raw.event_time, dayjs(nowISO).tz(tz));
-      if (coerced) raw.event_time = coerced;
-      else delete raw.event_time;
-    }
-    raw.tz = tz;
 
-    // Validasi akhir
+    // Validasi akhir (dua mode)
     const parsed = schema.safeParse(raw);
     if (!parsed.success) {
       return NextResponse.json(
@@ -188,22 +238,15 @@ export async function POST(req: NextRequest) {
           need: "clarify",
           data: raw,
           details: parsed.error.format(),
+          message: "Informasinya belum lengkap.",
         },
         { status: 200 }
       );
     }
 
     const data = parsed.data;
-    if (data.intent !== "create_reminder" || data.needs_clarification) {
-      return NextResponse.json(
-        { ok: false, need: "clarify", data },
-        { status: 200 }
-      );
-    }
-
     return NextResponse.json({ ok: true, data });
   } catch (e: any) {
-    // kalau quota 429 dsb., balas sinyal aman
     if (e?.status === 429) {
       return NextResponse.json(
         { ok: false, need: "retry", reason: "quota" },

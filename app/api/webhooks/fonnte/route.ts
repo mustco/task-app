@@ -1,36 +1,36 @@
+// app/api/webhooks/fonnte/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
+// ---- Types ---------------------------------------------------------------
 type FonnteWebhook = {
   device?: string;
-  sender: string; // nomor pengirim WA (wajib)
+  sender: string; // nomor WA pengirim (wajib)
   name?: string;
-  message?: string; // text biasa
-  text?: string; // tombol/interactive
+  message?: string; // pesan text biasa
+  text?: string; // tombol / interactive
   caption?: string; // caption media
-  button?: string; // quick reply button label
+  button?: string; // quick reply label
   list?: string; // list selection label
-  url?: string; // media inbound (kalau ada)
+  url?: string;
   filename?: string;
   extension?: string;
-  location?: string; // "lat,lon"
+  location?: string;
   member?: string; // jika dari group
   inboxid?: string; // untuk quote reply
-  secret?: string; // optional: secret dikirim via body
+  secret?: string; // optional: secret via body
 };
 
+// ---- Helpers -------------------------------------------------------------
 function pickText(b: Partial<FonnteWebhook>) {
-  // ambil teks dari beberapa kandidat field
+  // pilih text dari beberapa candidate field
   const cand = [b.text, b.message, b.caption, b.button, b.list].filter(
     (v): v is string => typeof v === "string" && v.trim().length > 0
   );
-
   const raw = cand[0] ?? "";
   const norm = raw.toString().normalize("NFKC").replace(/\s+/g, " ").trim();
-
   return { raw, lower: norm.toLowerCase() };
 }
 
-// verifikasi sederhana: cocokkan body.secret / header x-fonnte-secret
 function verifySecret(req: NextRequest, body: Partial<FonnteWebhook>) {
   const expected = process.env.FONNTE_WEBHOOK_SECRET;
   if (!expected) return true;
@@ -53,7 +53,7 @@ async function fonnteSend(payload: {
   if (!token) throw new Error("Missing FONNTE_API_TOKEN");
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 10_000);
+  const t = setTimeout(() => controller.abort(), 12_000);
 
   try {
     const res = await fetch("https://api.fonnte.com/send", {
@@ -65,7 +65,6 @@ async function fonnteSend(payload: {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-
     const json = await res.json().catch(() => ({}));
     if (!res.ok || json?.status === false) {
       throw new Error(json?.reason || `Fonnte send failed (${res.status})`);
@@ -76,6 +75,7 @@ async function fonnteSend(payload: {
   }
 }
 
+// ---- Route: POST ---------------------------------------------------------
 export async function POST(req: NextRequest) {
   let body: FonnteWebhook;
 
@@ -88,15 +88,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // verifikasi asal webhook (opsional)
   if (!verifySecret(req, body)) {
     return NextResponse.json(
       { ok: false, error: "unauthorized" },
       { status: 401 }
     );
   }
-
-  // guard minimal
   if (!body?.sender) {
     return NextResponse.json(
       { ok: false, error: "missing sender" },
@@ -104,20 +101,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // log ringkas untuk debug (hindari log token/PII)
+  // log ringan
   console.log(
     "[FONNTE IN]",
-    JSON.stringify({
-      sender: body.sender,
-      keys: Object.keys(body),
-    })
+    JSON.stringify({ sender: body.sender, keys: Object.keys(body) })
   );
 
   const name = body.name || "Kak";
   const { raw, lower: text } = pickText(body);
   let reply: string | undefined;
 
-  // --- perintah debug untuk lihat key & isi raw text ---
+  // perintah bantuan sederhana
+  if (["hi", "halo", "hai"].includes(text)) {
+    reply = `Halo ${name}, ada yang bisa kubantu? 👋\nKetik *menu* untuk bantuan.`;
+  } else if (text === "menu") {
+    reply =
+      `📌 Menu cepat:\n` +
+      `• Tulis pengingat bebas: *"Ingetin besok jam 7 rapat online"* → aku pahami & jadwalkan\n` +
+      `• Ketik *debug* → cek payload yang diterima`;
+  }
+
+  // debug: kirim balik sebagian payload
   if (text === "debug") {
     try {
       await fonnteSend({
@@ -134,89 +138,77 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
-  // --- router sederhana (contoh baseline) ---
-  if (["hi", "halo", "hai"].includes(text)) {
-    reply = `Halo ${name}, ada yang bisa kubantu? 👋\nKetik *menu* untuk bantuan.`;
-  } else if (text === "menu") {
-    reply =
-      `📌 Menu cepat:\n` +
-      `• Ketik *ingatkan besok jam 7 meeting* → bot jadwalkan pengingat\n` +
-      `• Ketik *debug* → cek field payload yg diterima`;
-  }
-
-  // --- (opsional) kirim ke NLU/LLM kamu untuk ekstraksi reminder ---
-  // contoh: kalau tidak match router sederhana, coba proses sebagai reminder bebas
+  // --- Jika belum ada jawaban, serahkan ke NLU (chatbot-first) -------------
   if (!reply && raw) {
     try {
-      // kalau kamu punya endpoint NLU internal
-      const h     = req.headers;
-      const host  = h.get("x-forwarded-host") || h.get("host");
+      const h = req.headers;
+      const host = h.get("x-forwarded-host") || h.get("host");
       const proto = h.get("x-forwarded-proto") || "https";
-      const base  = `${proto}://${host}`; 
-      const url   = `${base}/api/nlu/reminder`;
+      const base = `${proto}://${host}`;
+      const url = `${base}/api/nlu/reminder`;
 
-
-      // const app = process.env.APP_BASE_URL || "http://localhost:3000" || ;
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // kirim raw text asli
         body: JSON.stringify({
           text: raw,
           tz: process.env.TZ || "Asia/Jakarta",
         }),
-        // jangan bikin webhook lama: timeout singkat
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(12_000),
       });
 
       if (r.ok) {
         const data = await r.json();
+        // log singkat tanpa PII
+        console.log(
+          "[NLU OUT]",
+          JSON.stringify({
+            ok: data?.ok,
+            mode: data?.data?.mode,
+            intent: data?.data?.intent,
+          })
+        );
 
-        if (data?.ok) {
+        if (data?.ok && data?.data?.mode === "reminder") {
           const d = data.data as {
             title: string;
             event_time?: string;
             remind_time: string;
           };
-
-          // TODO: di sini kamu bisa langsung:
-          // - simpan ke DB (tasks)
-          // - panggil Trigger.dev (scheduleTaskReminder)
-          // Untuk demo kita balas konfirmasi saja:
           const when = new Date(d.remind_time).toLocaleString("id-ID");
           reply = `Siap! Aku ingetin **${d.title}** pada ${when} ✅`;
+        } else if (data?.ok && data?.data?.mode === "chat") {
+          reply = data.data.reply as string;
         } else if (data?.need === "clarify") {
           reply =
-            `Bisa diperjelas waktunya? ${data?.data?.needs_clarification ?? ""}\n` +
-            `Contoh: "hari Minggu jam 7 pagi" atau "28 Agustus jam 07.00".`;
+            `${data?.message || "Boleh diperjelas sedikit?"}\n` +
+            `Contoh: "Minggu 07.00 upacara" atau "28/08 07:00 meeting".`;
         }
       }
     } catch (e) {
-      console.warn("NLU call skipped/failed:", (e as Error).message);
+      console.warn("NLU call failed:", (e as Error).message);
     }
   }
 
-  // fallback kalau tetap gak ada reply
   if (!reply) {
-    reply = `Halo! Pesan kamu sudah kami terima ✅\nKetik *menu* untuk bantuan.`;
+    reply = `Pesan kamu sudah kuterima ✅\nKetik *menu* untuk bantuan.`;
   }
 
-  // --- kirim balasan ---
   try {
     await fonnteSend({
       target: body.sender,
       message: reply,
-      inboxid: body.inboxid, // kalau Inbox aktif, ini akan nge-quote
+      inboxid: body.inboxid,
       typing: true,
     });
   } catch (e) {
     console.error("send failed:", e);
-    // tetap 200 supaya Fonnte tidak retry berlebihan
   }
 
   return NextResponse.json({ ok: true });
 }
 
+// health check
 export async function GET() {
   return NextResponse.json({ ok: true });
 }
