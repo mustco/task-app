@@ -149,8 +149,15 @@ export async function POST(req: NextRequest) {
   if (!reply && raw) {
     try {
       // kalau kamu punya endpoint NLU internal
-      const app = process.env.APP_BASE_URL || "";
-      const r = await fetch(`${app}/api/nlu/reminder`, {
+      const h     = req.headers;
+      const host  = h.get("x-forwarded-host") || h.get("host");
+      const proto = h.get("x-forwarded-proto") || "https";
+      const base  = `${proto}://${host}`; 
+      const url   = `${base}/api/nlu/reminder`;
+
+
+      // const app = process.env.APP_BASE_URL || "http://localhost:3000" || ;
+      const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // kirim raw text asli
