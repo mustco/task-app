@@ -2,7 +2,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-// import { normalizePhone } from "@/lib/utils/phone";
 import { ensureISOWIB } from "@/lib/utils/time";
 import { phoneVariants } from "@/lib/utils/phone";
 
@@ -40,6 +39,34 @@ async function sendReply(to: string, message: string) {
   }).catch((e) => console.error("Fonnte send error:", e));
 }
 
+// --- helper: tutorial text
+const HOWTO_TEXT = `📗 Panduan Bot Tugas
+Saya bisa bantu bikin & kelola tugas langsung dari WhatsApp.
+
+➕ Tambah tugas
+• "ingatkan saya bayar listrik besok jam 9"
+• "tambah tugas meeting tim selasa 14:00 ingetin 2 hari sebelumnya"
+
+✏️ Ubah tugas
+• "ubah tugas meeting tim jadi rabu jam 10"
+(atau hapus dulu lalu tambah lagi)
+
+🗑️ Hapus tugas
+• "hapus tugas meeting"
+
+📋 Lihat tugas
+• "lihat tugas" / "daftar tugas"
+
+🔔 Reminder
+• Pakai frasa: "ingetin X hari sebelumnya"
+• Default: 1 hari sebelum, via WhatsApp.
+
+ℹ️ Catatan
+• Tanggal tanpa jam → default 09:00 WIB
+• "besok/lusa/minggu depan" didukung
+• Nomor ini harus sudah terdaftar di web
+`;
+
 export async function POST(request: Request) {
   try {
     const ct = request.headers.get("content-type") || "";
@@ -68,13 +95,32 @@ export async function POST(request: Request) {
       );
 
     const { sender, message } = parsed.data;
-    // const { e164, local } = normalizePhone(sender);
-const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
+    const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
+
+    // --- COMMAND: tutorial/help (ditangani sebelum NLU)
+    const text = String(message || "").trim();
+    const cmd = text.toLowerCase();
+    if (
+      cmd === "!tutorial" ||
+      cmd === "tutorial" ||
+      cmd === "/help" ||
+      cmd === "!help" ||
+      cmd === "help" ||
+      cmd === "!menu" ||
+      cmd === "menu"
+    ) {
+      await sendReply(sender, HOWTO_TEXT);
+      return NextResponse.json(
+        { status: "ok", handled: "tutorial" },
+        { status: 200 }
+      );
+    }
+
     // Lookup user
     const { data: userRow, error: userErr } = await supabaseAdmin
       .from("users")
       .select("id")
-      .in("phone_number", [e164, local, intlNoPlus, raw]) // cek semua bentuk
+      .in("phone_number", [e164, local, intlNoPlus, raw])
       .maybeSingle();
 
     if (userErr) {
@@ -98,8 +144,24 @@ const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
       cache: "no-store",
       body: JSON.stringify({ message }),
     });
-    if (!nluRes.ok) throw new Error("NLU service failed");
-    const task = await nluRes.json(); // sesuai ParsedTask
+
+    // Fallback ramah untuk chit-chat yang tidak ter-parse
+    if (!nluRes.ok) {
+      if (nluRes.status === 422) {
+        await sendReply(
+          sender,
+          'Sip! Kalau mau bikin tugas, coba: "tambah tugas bayar listrik besok jam 9" atau ketik "tutorial" buat panduan.'
+        );
+        return NextResponse.json({ status: "ignored" }, { status: 200 });
+      }
+      await sendReply(
+        sender,
+        "Lagi ada gangguan memproses pesan. Coba lagi ya."
+      );
+      return NextResponse.json({ error: "NLU failed" }, { status: 500 });
+    }
+
+    const task = await nluRes.json(); // ParsedTask atau {action:"none",...}
 
     // Default WA target jika kosong
     let target_contact: string | null = task.target_contact || e164;
@@ -110,6 +172,18 @@ const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
     // Pastikan method whatsapp kalau tak disebut
     const remind_method: "whatsapp" | "email" | "both" =
       task.remind_method || "whatsapp";
+
+    // Jika NLU memutuskan "none" → anggap chit-chat
+    if (task.action === "none") {
+      await sendReply(
+        sender,
+        'Siap! Untuk membuat tugas, ketik: "tambah tugas ..." atau lihat panduan dengan "tutorial".'
+      );
+      return NextResponse.json(
+        { status: "ok", handled: "none" },
+        { status: 200 }
+      );
+    }
 
     let replyMessage = "Maaf, saya tidak mengerti maksud Anda.";
 
@@ -131,7 +205,6 @@ const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
             reminder_days: task.reminder_days ?? 1,
             target_contact,
             target_phone,
-            // target_email boleh null; custom_fields/trigger_handle_id biarkan default
           },
         ]);
         replyMessage = error
@@ -166,7 +239,6 @@ const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
       }
 
       case "delete_task": {
-        // Hapus dengan fuzzy title pendek dari `title` yang diparsing
         const term = String(task.title || "").trim();
         if (!term) {
           replyMessage = "Sebutkan judul tugas yang ingin dihapus.";
@@ -187,15 +259,16 @@ const { e164, local, intlNoPlus, raw } = phoneVariants(sender);
       }
 
       case "update_task": {
-        // Skeleton; bisa dilanjutkan (ubah deadline/reminder_days/remind_method)
+        // (opsional) implementasi update nanti
         replyMessage =
           "Fitur ubah tugas segera hadir. Untuk sekarang, hapus lalu buat ulang ya.";
         break;
       }
 
-      default:
+      default: {
         replyMessage =
-          'Saya bisa: "tambah tugas ...", "lihat tugas", "hapus tugas ...", atau kalimat natural seperti "ingetin saya di tgl 30 agustus 1 hari sebelumnya".';
+          'Saya bisa: "tambah tugas ...", "lihat tugas", "hapus tugas ...", atau ketik "tutorial" untuk panduan.';
+      }
     }
 
     await sendReply(sender, replyMessage);

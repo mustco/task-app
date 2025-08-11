@@ -1,3 +1,4 @@
+// app/api/nlu/route.ts
 import { NextResponse } from "next/server";
 import { parseTextWithGemini } from "@/lib/gemini/client";
 
@@ -11,10 +12,22 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
     const parsed = await parseTextWithGemini(message);
+
     if (!parsed) {
-      return NextResponse.json({ error: "Unable to parse" }, { status: 422 });
+      // fallback non-destructive
+      return NextResponse.json({
+        action: "none",
+        title: "",
+        description: null,
+        deadline: null,
+        reminder_days: 1,
+        remind_method: "whatsapp",
+        target_contact: null,
+      });
     }
+
     return NextResponse.json(parsed);
   } catch (e) {
     console.error("NLU error:", e);
