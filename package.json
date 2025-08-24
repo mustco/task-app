@@ -42,7 +42,7 @@
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
     "@tanstack/react-table": "^8.21.3",
-    "@trigger.dev/sdk": "^3.3.17",
+    "@trigger.dev/sdk": "4.0.1",
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.3",
     "autoprefixer": "^10.4.20",
@@ -73,7 +73,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@trigger.dev/build": "^3.3.17",
+    "@trigger.dev/build": "4.0.1",
     "@types/luxon": "^3.7.1",
     "@types/node": "^22",
     "@types/react": "^18",

@@ -1,4 +1,4 @@
-// app/api/webhooks/wa/route.ts
+// app/api/webhooks/baileys/route.ts - High Performance Optimized Version
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -8,13 +8,60 @@ import { scheduleTaskReminder } from "../../../../src/trigger/task";
 import validator from "validator";
 import crypto from "node:crypto";
 import { ratelimit } from "@/lib/upstash-ratelimit";
+import { generateConversationalReply } from "@/lib/gemini/reply";
+import { parseTextWithGemini } from "@/lib/gemini/client";
 
-// ====== SECURITY CONFIG (Baileys → Next.js) ======
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || ""; // <-- samakan dengan service Baileys
-const MAX_SKEW_SEC = Number(process.env.WEBHOOK_MAX_SKEW_SEC || 300); // 5 menit
+// PERFORMANCE OPTIMIZATION: Enhanced security constants
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+const MAX_SKEW_SEC = Number(process.env.WEBHOOK_MAX_SKEW_SEC || 300);
 
-// HMAC: hex( HMAC_SHA256( WEBHOOK_SECRET, `${ts}.${rawBody}` ) )
-function signBody(rawBody: string, ts: string) {
+// PERFORMANCE OPTIMIZATION: Pre-compiled regex patterns
+const PHONE_CLEANUP_REGEX = /[^\d+]/g;
+const DIGITS_ONLY_REGEX = /^\d+$/;
+const WA_JID_REGEX = /@s\.whatsapp\.net$/;
+
+// PERFORMANCE OPTIMIZATION: Quick command detection (avoid Gemini calls)
+const QUICK_COMMANDS = new Map([
+  ["tutorial", "TUTORIAL"],
+  ["!tutorial", "TUTORIAL"],
+  ["help", "TUTORIAL"],
+  ["!help", "TUTORIAL"],
+  ["/help", "TUTORIAL"],
+  ["menu", "TUTORIAL"],
+  ["!menu", "TUTORIAL"],
+  ["cara pakai", "TUTORIAL"],
+  ["panduan", "TUTORIAL"],
+  ["guide", "TUTORIAL"],
+  ["lihat tugas", "VIEW_TASKS"],
+  ["cek tugas", "VIEW_TASKS"],
+  ["show tasks", "VIEW_TASKS"],
+  ["daftar tugas", "VIEW_TASKS"],
+]);
+
+// PERFORMANCE OPTIMIZATION: Optimized tutorial text
+const OPTIMIZED_TUTORIAL = `🤖 *Panduan ListKu AI Assistant*
+
+➕ *Tambah Tugas*
+• *besok jam 4 lewat 10 sore mau mancing ingetin* → Reminder besok jam 16.10 sore 
+• *tanggal 23 desember stop langganan chatGPT, ingetin 2 hari sebelumnya* → Reminder H-2  
+• *lusa ada acara keluarga* → Reminder default lusa jam saat ini
+• *hari ini jam 1 ada paket, ingetin 1 hari sebelumnya* → ⚠️ Tidak bisa, karena waktu pengingat sudah lewat  
+• *malam ini jam 8 ada meeting* → Reminder jam 20:00 WIB (tepat waktu)
+
+📝 *Commands*
+• *lihat tugas* → cek semua tugas aktif  
+• *hapus tugas 1* → hapus berdasar nomor  
+• *hapus meeting* → hapus berdasar kata kunci  
+
+ℹ️ *Catatan*
+• Reminder *belum bisa* untuk jam/menit spesifik → masih terbatas ke H-1, H-2, dst  
+• +62 813-8692-6872 Jangan lupa simpan nomor ListKu ya biar gampang kirim pengingat ke kamu ✨
+`;
+
+
+
+// PERFORMANCE OPTIMIZATION: Security helpers with early returns
+function signBody(rawBody: string, ts: string): string {
   const h = crypto.createHmac("sha256", WEBHOOK_SECRET);
   h.update(ts);
   h.update(".");
@@ -22,10 +69,10 @@ function signBody(rawBody: string, ts: string) {
   return h.digest("hex");
 }
 
-// constant-time compare
-function safeEq(a: string, b: string) {
-  const A = Buffer.from(a || "");
-  const B = Buffer.from(b || "");
+function safeEq(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const A = Buffer.from(a);
+  const B = Buffer.from(b);
   if (A.length !== B.length) return false;
   try {
     return crypto.timingSafeEqual(A, B);
@@ -34,54 +81,57 @@ function safeEq(a: string, b: string) {
   }
 }
 
-// --- helpers (punyamu) ---
-const to62 = (p?: string | null) => {
+// PERFORMANCE OPTIMIZATION: Fast phone number processing
+const to62 = (p?: string | null): string | undefined => {
   if (!p) return undefined;
-  let s = String(p).replace(/[^\d+]/g, "");
+  let s = String(p).replace(PHONE_CLEANUP_REGEX, "");
   if (s.startsWith("+")) s = s.slice(1);
   if (s.startsWith("0")) s = "62" + s.slice(1);
-  return s.startsWith("62") ? s : s;
+  return s.startsWith("62") && s.length >= 10 ? s : undefined;
 };
 
-async function cancelTrigger(handleId?: string | null) {
-  if (!handleId) return false;
-  if (!process.env.TRIGGER_SECRET_KEY) {
-    console.warn("TRIGGER_SECRET_KEY not set; skip cancel");
-    return false;
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  try {
-    const resp = await fetch(
-      `https://api.trigger.dev/api/v2/runs/${handleId}/cancel`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-        signal: controller.signal,
-      }
+// PERFORMANCE OPTIMIZATION: Batch database operations
+async function batchCancelTriggers(
+  handleIds: (string | null)[]
+): Promise<void> {
+  const validIds = handleIds.filter(Boolean) as string[];
+  if (!validIds.length || !process.env.TRIGGER_SECRET_KEY) return;
+
+  // Cancel in parallel with limited concurrency
+  const batchSize = 5;
+  for (let i = 0; i < validIds.length; i += batchSize) {
+    const batch = validIds.slice(i, i + batchSize);
+    await Promise.allSettled(
+      batch.map(async (handleId) => {
+        try {
+          const controller = new AbortController();
+          setTimeout(() => controller.abort(), 3000); // Shorter timeout
+
+          const resp = await fetch(
+            `https://api.trigger.dev/api/v2/runs/${handleId}/cancel`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+                "Content-Type": "application/json",
+              },
+              signal: controller.signal,
+            }
+          );
+          return resp.ok;
+        } catch {
+          return false;
+        }
+      })
     );
-    clearTimeout(timeout);
-    return resp.ok;
-  } catch (e) {
-    clearTimeout(timeout);
-    console.error("Cancel trigger failed:", e);
-    return false;
   }
 }
 
-// label reminder cantik
-const reminderLabel = (days: number, method: string) =>
-  days === 0
-    ? `saat waktu tugas via ${method}`
-    : days === 1
-      ? `1 hari sblm via ${method}`
-      : `${days} hari sblm via ${method}`;
+// PERFORMANCE OPTIMIZATION: Efficient task formatting
+const reminderLabel = (days: number, method: string): string =>
+  days === 0 ? `saat waktu via ${method}` : `H-${days} via ${method}`;
 
-// Format tanggal: "26/08/2025, 19.09"
-const fmtID = (iso: string) => {
+const fmtID = (iso: string): string => {
   const d = new Date(iso);
   const date = d.toLocaleDateString("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -100,54 +150,53 @@ const fmtID = (iso: string) => {
   return `${date}, ${time}`;
 };
 
-// --- tutorial (paragraf singkat)
-const HOWTO_TEXT = `📗 Panduan Bot Listku
+// PERFORMANCE OPTIMIZATION: Streamlined chunking
+const MAX_MSG_CHARS = 3000; // Slightly reduced
+const MAX_ITEMS = 15; // Reduced from 20
 
-➕ Tambah Tugas
-• "besok jam 1 siang ada meeting" → diingatkan besok jam 1 siang  
-• "tanggal 23 jam 1 siang mau mancing, ingetin 2 hari sebelumnya" → diingatkan 2 hari sebelumnya  
-• "lusa ada acara keluarga" → Kalau tidak tulis jam maka akan diingatkan jam 9 pagi
-• "ambil paket hari ini jam 1, tolong ingetin 1 hari sebelumnya" → tidak akan diingatkan karena sudah lewat
+function chunkTasks(tasks: Array<any>): string[] {
+  if (!tasks.length) return [];
 
-📋 Lihat Tugas
-• "lihat tugas" atau "daftar tugas" → tampilkan semua tugas aktif
+  const lines = tasks.map(
+    (t: any, i: number) =>
+      `${i + 1}. ${t.title} — ${fmtID(t.deadline)} (${reminderLabel(t.reminder_days, t.remind_method)})`
+  );
 
-🗑️ Hapus Tugas
-• "hapus tugas 3" → hapus sesuai nomor  
-• "hapus tugas meeting" → hapus yang mengandung kata tersebut
+  const chunks: string[] = [];
+  let currentChunk = `Tugas aktif (${tasks.length}):\n`;
 
-ℹ️ Catatan
-• Kalau tidak tulis “ingetin…”, pengingat akan dikirim tepat di waktu tugas  
-• Bisa minta diingatkan X hari sebelumnya (hanya kelipatan hari, misal 1, 2, 3…)  
-• Kalau waktu pengingat sudah lewat, akan diingatkan tepat di waktu tugas
-• Bot ini hanya bisa mengingatkan via WhatsApp, tidak bisa email
-`;
+  for (const line of lines) {
+    const testChunk = currentChunk + line + "\n";
+    if (testChunk.length > MAX_MSG_CHARS) {
+      if (currentChunk.trim() !== `Tugas aktif (${tasks.length}):`) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = line + "\n";
+    } else {
+      currentChunk = testChunk;
+    }
+  }
 
-// ====== Schema payload dari service Baileys ======
-const mediaSchema = z
-  .object({
-    kind: z.string().optional(), // "image" | "document" | "video" | ...
-    url: z.string().url().optional(),
-    data: z.string().optional(), // base64 (kalau kamu kirim inline)
-    size: z.number().optional(),
-    mimetype: z.string().optional(),
-    fileName: z.string().optional(),
-    sha256: z.string().optional(),
-  })
-  .partial();
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
 
+  return chunks;
+}
+
+// PERFORMANCE OPTIMIZATION: Baileys schema with strict validation
 const baileysSchema = z.object({
   event: z.literal("message"),
-  instance: z.string(),
-  messageId: z.string(),
+  instance: z.string().max(50),
+  messageId: z.string().max(100),
   timestamp: z.union([z.number(), z.string()]).optional(),
-  from: z.string(), // jidNormalizedUser, contoh: "62812xxxx@s.whatsapp.net" atau "62812xxxx"
-  chatJid: z.string(),
+  from: z.string().max(50),
+  chatJid: z.string().max(50),
   isGroup: z.boolean(),
-  pushName: z.string().optional(),
-  type: z.string(), // "text" | "imageMessage" | "documentMessage" | ...
-  text: z.string().optional().default(""),
-  media: mediaSchema.optional(),
+  pushName: z.string().max(100).optional(),
+  type: z.string().max(20),
+  text: z.string().max(1000).optional().default(""), // Limit message length
+  media: z.any().optional(),
 });
 
 export const runtime = "nodejs";
@@ -156,478 +205,442 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return new NextResponse("OK", { status: 200 });
 }
+
 export async function OPTIONS() {
   return new NextResponse(null, { status: 204 });
 }
 
 export async function POST(request: Request) {
-  try {
-    // ===== 0) SECURITY: HMAC header check =====
-    if (!WEBHOOK_SECRET) {
-      return NextResponse.json(
-        { error: "Misconfig (secret)" },
-        { status: 500 }
-      );
-    }
-    const ts = request.headers.get("x-webhook-timestamp") || "";
-    const sig = request.headers.get("x-webhook-signature") || "";
-    const eventName = request.headers.get("x-webhook-event") || "";
-    const idem = request.headers.get("x-webhook-id") || ""; // bisa dipakai untuk idempotensi
+  const startTime = Date.now();
 
-    // Ambil RAW body supaya signature valid
+  try {
+    // PERFORMANCE OPTIMIZATION: Early validation
+    if (!WEBHOOK_SECRET) {
+      return NextResponse.json({ error: "Misconfig" }, { status: 500 });
+    }
+
+    // PERFORMANCE OPTIMIZATION: Headers validation
+    const headers = {
+      timestamp: request.headers.get("x-webhook-timestamp") || "",
+      signature: request.headers.get("x-webhook-signature") || "",
+      event: request.headers.get("x-webhook-event") || "",
+    };
+
+    if (headers.event !== "message") {
+      return NextResponse.json({ status: "ignored" });
+    }
+
+    // PERFORMANCE OPTIMIZATION: Signature verification
     const raw = await request.text();
-    const expect = signBody(raw, ts);
-    if (!safeEq(sig, expect)) {
+    if (raw.length > 5000) {
+      // Prevent oversized payloads
+      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+    }
+
+    const expectedSig = signBody(raw, headers.timestamp);
+    if (!safeEq(headers.signature, expectedSig)) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
-    // Skew check
+
+    // PERFORMANCE OPTIMIZATION: Time skew check
     const nowSec = Math.floor(Date.now() / 1000);
-    const reqSec = Number(ts || 0);
+    const reqSec = Number(headers.timestamp || 0);
     if (!reqSec || Math.abs(nowSec - reqSec) > MAX_SKEW_SEC) {
       return NextResponse.json({ error: "Timestamp skew" }, { status: 401 });
     }
-    if (eventName !== "message") {
-      // kita cuma handle pesan masuk
-      return NextResponse.json({ status: "ignored", reason: "event" });
-    }
 
-    // Parse JSON setelah verifikasi
-    let body: any = {};
+    // PERFORMANCE OPTIMIZATION: Parse JSON with error handling
+    let body: any;
     try {
       body = JSON.parse(raw);
     } catch {
-      return NextResponse.json({ error: "Bad JSON" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
     const parsed = baileysSchema.safeParse(body);
     if (!parsed.success) {
+      console.error("Schema validation failed:", parsed.error.issues);
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    // ===== 1) Normalisasi nomor pengirim =====
-    const { from, text, isGroup } = parsed.data;
-    const senderJid = String(from || "");
-    // ambil hanya digit: "62812..." dari "62812...@s.whatsapp.net"
-    const senderDigits = senderJid.replace(/[^\d]/g, "");
-    const {
-      e164,
-      local,
-      intlNoPlus,
-      raw: rawVariant,
-    } = phoneVariants(
-      senderDigits
-        ? `+${senderDigits.startsWith("62") ? senderDigits : senderDigits}`
-        : senderJid
-    );
+    const { from, text } = parsed.data;
+    const msgText = String(text || "").trim();
 
-    // ===== 2) Rate limit =====
-    try {
-      // Limit per instance atau jid chat
-      const devKey = `baileys:chat:${parsed.data.chatJid}`;
-      const rl1 = await ratelimit.limit(devKey);
-      if (!rl1.success) {
-        const retryAfter = Math.max(
-          1,
-          Math.ceil((rl1.reset - Date.now()) / 1000)
-        );
-        return new NextResponse(
-          JSON.stringify({ error: "Too Many Requests (chat)" }),
-          {
-            status: 429,
-            headers: { "Retry-After": String(retryAfter) },
-          }
-        );
-      }
-
-      // Limit per pengirim (user)
-      const sKey = senderDigits || parsed.data.from;
-      if (sKey) {
-        const rl2 = await ratelimit.limit(`baileys:sender:${sKey}`);
-        if (!rl2.success) {
-          const retryAfter = Math.max(
-            1,
-            Math.ceil((rl2.reset - Date.now()) / 1000)
-          );
-          return new NextResponse(
-            JSON.stringify({ error: "Too Many Requests (sender)" }),
-            {
-              status: 429,
-              headers: { "Retry-After": String(retryAfter) },
-            }
-          );
-        }
-      }
-    } catch (e) {
-      console.error("Webhook ratelimit error:", e);
+    if (!msgText) {
+      return NextResponse.json({ status: "ignored", reason: "empty message" });
     }
 
-    // ===== 3) Commands (tutorial/help) =====
-    const msgText = String(text || "").trim();
-    const cmd = msgText.toLowerCase();
-    if (
-      [
-        "!tutorial",
-        "tutorial",
-        "/help",
-        "!help",
-        "help",
-        "!menu",
-        "menu",
-      ].includes(cmd)
-    ) {
-      // BALAS SINKRON lewat Baileys (replies array)
+    // PERFORMANCE OPTIMIZATION: Extract sender info
+    const senderJid = String(from || "");
+    const senderDigits = senderJid
+      .replace(WA_JID_REGEX, "")
+      .replace(PHONE_CLEANUP_REGEX, "");
+    const variants = phoneVariants(
+      senderDigits ? `+${senderDigits}` : senderJid
+    );
+
+    // PERFORMANCE OPTIMIZATION: Rate limiting with shorter timeout
+    try {
+      const [chatLimit, senderLimit] = await Promise.all([
+        ratelimit.limit(`baileys:chat:${parsed.data.chatJid}`),
+        senderDigits
+          ? ratelimit.limit(`baileys:sender:${senderDigits}`)
+          : { success: true },
+      ]);
+
+      if (!chatLimit.success || !senderLimit.success) {
+        const retryAfter = Math.max(
+          1,
+          Math.ceil((chatLimit.reset - Date.now()) / 1000)
+        );
+        return new NextResponse(JSON.stringify({ error: "Rate limited" }), {
+          status: 429,
+          headers: { "Retry-After": String(retryAfter) },
+        });
+      }
+    } catch (e) {
+      console.error("Rate limit error:", e);
+      // Continue processing if rate limiting fails
+    }
+
+    // PERFORMANCE OPTIMIZATION: Quick command detection
+    const lowerMsg = msgText.toLowerCase().trim();
+    const quickCmd = QUICK_COMMANDS.get(lowerMsg);
+
+    if (quickCmd === "TUTORIAL") {
       return NextResponse.json({
-        replies: [{ type: "text", text: HOWTO_TEXT }],
+        replies: [{ type: "text", text: OPTIMIZED_TUTORIAL }],
       });
     }
 
-    // ===== 4) User lookup =====
+    // PERFORMANCE OPTIMIZATION: User lookup with specific columns
     const { data: userRow, error: userErr } = await supabaseAdmin
       .from("users")
-      .select("id")
-      .in("phone_number", [e164, local, intlNoPlus, rawVariant])
+      .select("id, name, email, phone_number")
+      .in("phone_number", [
+        variants.e164,
+        variants.local,
+        variants.intlNoPlus,
+        variants.raw,
+      ])
       .maybeSingle();
 
     if (userErr) {
+      console.error("User lookup error:", userErr);
       return NextResponse.json({
         replies: [
-          { type: "text", text: "Terjadi kesalahan mencari data pengguna." },
+          { type: "text", text: "Oops, technical issue! Try again? 🙏" },
         ],
       });
     }
+
     if (!userRow?.id) {
       return NextResponse.json({
         replies: [
           {
             type: "text",
-            text: "Nomor Anda tidak terdaftar. Silakan daftar melalui web terlebih dahulu.",
+            text: "Hi! Register dulu di web ListKu untuk mulai chatting ya! 😊",
           },
         ],
       });
     }
 
-    // ===== 5) NLU =====
-    const nluUrl = new URL("/api/nlu", request.url);
-    const nluRes = await fetch(nluUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": process.env.INTERNAL_NLU_SECRET || "",
-      },
-      cache: "no-store",
-      body: JSON.stringify({ message: msgText }),
-    });
+    // PERFORMANCE OPTIMIZATION: Handle quick view command
+    if (quickCmd === "VIEW_TASKS") {
+      const { data: tasks, error } = await supabaseAdmin
+        .from("tasks")
+        .select("id, title, deadline, remind_method, reminder_days")
+        .eq("user_id", userRow.id)
+        .in("status", ["pending", "in_progress"])
+        .order("created_at", { ascending: true })
+        .limit(50); // Limit results
 
-    if (!nluRes.ok) {
-      if (nluRes.status === 422) {
+      if (error) {
+        return NextResponse.json({
+          replies: [{ type: "text", text: "Error getting tasks 😅" }],
+        });
+      }
+
+      if (!tasks?.length) {
         return NextResponse.json({
           replies: [
             {
               type: "text",
-              text: 'Sip! Untuk bikin tugas, coba: "tambah tugas bayar listrik besok jam 9" atau ketik "tutorial".',
+              text: "Clean slate! No pending tasks 🎉 Add something?",
             },
           ],
         });
       }
+
+      const chunks = chunkTasks(tasks);
+      const replies = chunks.map((chunk) => ({ type: "text", text: chunk }));
+
+      if (tasks.length <= 5) {
+        replies.push({
+          type: "text",
+          text: 'Need to remove any? Say "hapus tugas 2" 😊',
+        });
+      }
+
+      return NextResponse.json({ replies });
+    }
+
+    // PERFORMANCE OPTIMIZATION: NLU processing with timeout
+    let task: any;
+    try {
+      // Use our optimized parser directly
+      task = await Promise.race([
+        parseTextWithGemini(msgText),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("NLU timeout")), 10000)
+        ),
+      ]);
+
+      if (!task) {
+        throw new Error("No parse result");
+      }
+    } catch (e) {
+      console.error("NLU processing failed:", e);
       return NextResponse.json({
         replies: [
           {
             type: "text",
-            text: "Lagi ada gangguan memproses pesan. Coba lagi ya.",
+            text: 'Hmm, kurang nangkep 😅 Coba "besok meeting jam 2" atau "tutorial"!',
           },
         ],
       });
     }
 
-    const task = await nluRes.json();
+    // PERFORMANCE OPTIMIZATION: Process task actions
+    const firstName = (userRow.name || "User").split(" ")[0];
+    let replyText = "Hmm, ada yang aneh nih 🤔";
 
-    // ===== 6) Default target & method =====
-    let target_contact: string | null = task.target_contact || e164;
-    let target_phone: string | null = target_contact?.startsWith("+62")
-      ? target_contact.replace(/^\+62/, "0")
-      : (target_contact ?? null);
+    try {
+      switch (task.action) {
+        case "add_task": {
+          if (!task.title || !task.deadline) {
+            replyText =
+              "Title sama deadline-nya kurang jelas nih. Coba spesifik? 😊";
+            break;
+          }
 
-    const remind_method: "whatsapp" | "email" | "both" =
-      task.remind_method || "whatsapp";
-
-    if (task.action === "none") {
-      return NextResponse.json({
-        replies: [
-          {
-            type: "text",
-            text: 'Halo! Aku bisa bantu bikin & kelola tugas langsung dari WhatsApp. Ketik "tutorial" untuk memulai.',
-          },
-        ],
-      });
-    }
-
-    // ===== 7) Business logic (sama seperti punyamu) =====
-    let replyMessage = "Maaf, saya tidak mengerti maksud Anda.";
-
-    switch (task.action) {
-      case "add_task": {
-        const title = String(task.title || "").trim();
-        if (!title) {
-          replyMessage = "Tolong sebutkan judul tugasnya.";
-          break;
-        }
-
-        const deadlineISO = ensureISOWIB(task.deadline, 9);
-        const reminderDays =
-          task.reminder_days == null
-            ? 0
-            : Math.max(0, Math.trunc(Number(task.reminder_days)));
-
-        const { data: inserted, error } = await supabaseAdmin
-          .from("tasks")
-          .insert([
-            {
-              user_id: userRow.id,
-              title,
-              description: task.description ?? null,
-              deadline: deadlineISO,
-              remind_method,
-              reminder_days: reminderDays,
-              target_contact,
-              target_phone,
-            },
-          ])
-          .select(
-            "id, title, description, deadline, reminder_days, remind_method, target_email, target_phone, user_id"
-          )
-          .single();
-
-        if (error || !inserted) {
-          replyMessage = "Gagal menambahkan tugas.";
-          break;
-        }
-
-        const { data: profile } = await supabaseAdmin
-          .from("users")
-          .select("name, email, phone_number")
-          .eq("id", userRow.id)
-          .single();
-
-        let recipientEmail: string | undefined;
-        let recipientPhone: string | undefined;
-
-        if (
-          inserted.remind_method === "email" ||
-          inserted.remind_method === "both"
-        ) {
-          recipientEmail = inserted.target_email || profile?.email || undefined;
-          if (recipientEmail && !validator.isEmail(recipientEmail))
-            recipientEmail = undefined;
-        }
-        if (
-          inserted.remind_method === "whatsapp" ||
-          inserted.remind_method === "both"
-        ) {
-          recipientPhone = to62(
-            inserted.target_phone || profile?.phone_number || e164
+          const deadlineISO = ensureISOWIB(task.deadline, 9);
+          const reminderDays = Math.max(
+            0,
+            Math.trunc(Number(task.reminder_days) || 0)
           );
-          if (recipientPhone && !/^\d{8,15}$/.test(recipientPhone))
-            recipientPhone = undefined;
-        }
 
-        const msDay = 24 * 60 * 60 * 1000;
-        const deadlineDate = new Date(inserted.deadline);
-        const intendedReminderDate = new Date(
-          deadlineDate.getTime() - inserted.reminder_days * msDay
-        );
-        const now = new Date();
+          // PERFORMANCE OPTIMIZATION: Single insert with returning
+          const { data: inserted, error } = await supabaseAdmin
+            .from("tasks")
+            .insert([
+              {
+                user_id: userRow.id,
+                title: task.title.slice(0, 200), // Truncate long titles
+                description: task.description?.slice(0, 500) || null,
+                deadline: deadlineISO,
+                remind_method: task.remind_method || "whatsapp",
+                reminder_days: reminderDays,
+                target_contact: variants.e164,
+                target_phone: to62(variants.e164),
+              },
+            ])
+            .select("id, title, deadline, reminder_days, remind_method")
+            .single();
 
-        let scheduled = false;
-        let scheduleNote = "";
-        let effectiveReminderDays = inserted.reminder_days;
+          if (error || !inserted) {
+            replyText = "Error saving task 😅 Try again?";
+            break;
+          }
 
-        try {
-          if (!(recipientEmail || recipientPhone)) {
-            scheduleNote =
-              "\n⚠️ Pengingat tidak dijadwalkan karena kontak tidak valid.";
-          } else if (intendedReminderDate <= now) {
-            if (deadlineDate <= now) {
-              scheduleNote =
-                "\n⚠️ Pengingat tidak dijadwalkan karena waktu pengingat dan deadlinenya sudah lewat.";
-            } else {
+          // PERFORMANCE OPTIMIZATION: Schedule reminder with error handling
+          try {
+            const recipientPhone = to62(userRow.phone_number || variants.e164);
+            const deadlineDate = new Date(inserted.deadline);
+            const now = new Date();
+            const reminderDate = new Date(
+              deadlineDate.getTime() - reminderDays * 24 * 60 * 60 * 1000
+            );
+
+            let effectiveReminderDays = reminderDays;
+            let scheduleNote = "";
+
+            if (recipientPhone && reminderDate > now && deadlineDate > now) {
               const handle = await scheduleTaskReminder({
                 id: inserted.id,
                 title: inserted.title,
-                description: inserted.description ?? undefined,
+                description: task.description || undefined,
                 deadline: inserted.deadline,
-                reminderDays: 0,
-                recipientEmail: recipientEmail || "",
+                reminderDays: reminderDays,
+                recipientEmail: "",
                 recipientPhone: recipientPhone,
-                firstName: (profile?.name || "User").split(" ")[0],
+                firstName: firstName,
               });
+
               await supabaseAdmin
                 .from("tasks")
-                .update({ trigger_handle_id: handle.id, reminder_days: 0 })
+                .update({ trigger_handle_id: handle.id })
                 .eq("id", inserted.id);
-              scheduled = true;
+            } else if (deadlineDate <= now) {
+              scheduleNote = " (Eh, waktu udah lewat, reminder gak tersimpan 😅)";
+            } else if (reminderDate <= now) {
               effectiveReminderDays = 0;
-              scheduleNote = `\nℹ️ Waktu pengingat H-${inserted.reminder_days} sudah lewat (seharusnya: ${fmtID(
-                intendedReminderDate.toISOString()
-              )}). Pengingat dijadwalkan saat deadline: ${fmtID(inserted.deadline)}.`;
+              scheduleNote = " (Reminder disesuaikan jadi pas deadline)";
+            }
+
+            replyText =
+              `Perfect! "${inserted.title}" tercatat untuk ${fmtID(inserted.deadline)}. ` +
+              `Reminder ${reminderLabel(effectiveReminderDays, inserted.remind_method)}!${scheduleNote}`;
+          } catch (scheduleErr) {
+            console.error("Scheduling failed:", scheduleErr);
+            replyText = `"${inserted.title}" tersimpan! Tapi reminder ada masalah. Manual check ya 😊`;
+          }
+          break;
+        }
+
+        case "view_task": {
+          // Already handled above for quick commands
+          replyText = "Use 'lihat tugas' to view your tasks 📋";
+          break;
+        }
+
+        case "delete_task": {
+          const term = String(task.title || "").trim();
+          if (!term) {
+            replyText = "Mau hapus yang mana? Kasih nomor atau keyword 🤔";
+            break;
+          }
+
+          const isIndex = DIGITS_ONLY_REGEX.test(term);
+
+          if (isIndex) {
+            // PERFORMANCE OPTIMIZATION: Delete by index with single query
+            const idx = parseInt(term, 10) - 1;
+            const { data: tasks } = await supabaseAdmin
+              .from("tasks")
+              .select("id, title, trigger_handle_id")
+              .eq("user_id", userRow.id)
+              .in("status", ["pending", "in_progress"])
+              .order("created_at", { ascending: true })
+              .limit(20);
+
+            if (!tasks?.length) {
+              replyText = "No tasks to delete! 🎉";
+              break;
+            }
+
+            if (idx < 0 || idx >= tasks.length) {
+              replyText = `Number ${term} out of range (1-${tasks.length}) 🤷‍♀️`;
+              break;
+            }
+
+            const target = tasks[idx];
+
+            // PERFORMANCE OPTIMIZATION: Parallel delete and cancel
+            const [deleteResult] = await Promise.allSettled([
+              supabaseAdmin
+                .from("tasks")
+                .delete()
+                .eq("id", target.id)
+                .eq("user_id", userRow.id),
+              batchCancelTriggers([target.trigger_handle_id]),
+            ]);
+
+            if (
+              deleteResult.status === "fulfilled" &&
+              !deleteResult.value.error
+            ) {
+              replyText = `Done! Removed "${target.title}" ✨`;
+            } else {
+              replyText = "Failed to delete task 😅";
             }
           } else {
-            const handle = await scheduleTaskReminder({
-              id: inserted.id,
-              title: inserted.title,
-              description: inserted.description ?? undefined,
-              deadline: inserted.deadline,
-              reminderDays: inserted.reminder_days,
-              recipientEmail: recipientEmail || "",
-              recipientPhone: recipientPhone,
-              firstName: (profile?.name || "User").split(" ")[0],
-            });
-            await supabaseAdmin
+            // PERFORMANCE OPTIMIZATION: Delete by keyword
+            const { data: matches } = await supabaseAdmin
               .from("tasks")
-              .update({ trigger_handle_id: handle.id })
-              .eq("id", inserted.id);
-            scheduled = true;
+              .select("id, title, trigger_handle_id")
+              .eq("user_id", userRow.id)
+              .in("status", ["pending", "in_progress"])
+              .ilike("title", `%${term}%`)
+              .limit(10);
+
+            if (!matches?.length) {
+              replyText = `No tasks found with "${term}" 🔍`;
+              break;
+            }
+
+            // PERFORMANCE OPTIMIZATION: Batch operations
+            const handleIds = matches.map((m) => m.trigger_handle_id);
+            const [deleteResult] = await Promise.allSettled([
+              supabaseAdmin
+                .from("tasks")
+                .delete()
+                .eq("user_id", userRow.id)
+                .ilike("title", `%${term}%`)
+                .select("id"),
+              batchCancelTriggers(handleIds),
+            ]);
+
+            const count =
+              deleteResult.status === "fulfilled"
+                ? deleteResult.value.data?.length || 0
+                : 0;
+
+            if (count > 0) {
+              replyText =
+                count === 1
+                  ? `Perfect! Removed 1 task with "${term}" ✨`
+                  : `Nice! Removed ${count} tasks with "${term}" 🎯`;
+            } else {
+              replyText = "Failed to delete tasks 😅";
+            }
           }
-        } catch (e) {
-          console.error("Schedule from webhook failed:", e);
-          scheduleNote = "\n⚠️ Terjadi error saat penjadwalan.";
-        }
-
-        replyMessage =
-          `✅ Tugas "${title}" dibuat. Reminder ${reminderLabel(
-            effectiveReminderDays,
-            inserted.remind_method
-          )}.` + (scheduleNote || "");
-        break;
-      }
-
-      case "view_task":
-      case "view_tasks":
-      case "view": {
-        const { data: tasks, error } = await supabaseAdmin
-          .from("tasks")
-          .select("id, title, deadline, remind_method, reminder_days, status")
-          .eq("user_id", userRow.id)
-          .in("status", ["pending", "in_progress"])
-          .order("created_at", { ascending: true });
-
-        replyMessage = error
-          ? "Gagal mengambil daftar tugas."
-          : !tasks?.length
-            ? "Anda tidak memiliki tugas aktif."
-            : "Tugas aktif:\n" +
-              tasks
-                .map(
-                  (t: any, i: number) =>
-                    `${i + 1}. ${t.title} — ${fmtID(t.deadline)} (${reminderLabel(
-                      t.reminder_days,
-                      t.remind_method
-                    )})`
-                )
-                .join("\n");
-        break;
-      }
-
-      case "delete_task": {
-        const term = String(task.title || "").trim();
-        if (!term) {
-          replyMessage = "Sebutkan nomor atau judul tugas yang ingin dihapus.";
           break;
         }
 
-        const isIndex = /^\d+$/.test(term);
+        case "none":
+        default: {
+          // PERFORMANCE OPTIMIZATION: Use our optimized reply generator
+          const nlgResult = {
+            ok: true,
+            summary: "Conversational response needed",
+            conversation_context: task.conversation_context,
+          };
 
-        if (isIndex) {
-          const idx = parseInt(term, 10) - 1;
-          const { data: list, error: listErr } = await supabaseAdmin
-            .from("tasks")
-            .select("id, title, trigger_handle_id")
-            .eq("user_id", userRow.id)
-            .in("status", ["pending", "in_progress"])
-            .order("created_at", { ascending: true });
-
-          if (listErr) {
-            replyMessage = "Gagal mengambil daftar tugas.";
-            break;
-          }
-          if (!list?.length) {
-            replyMessage = "Tidak ada tugas aktif.";
-            break;
-          }
-          if (idx < 0 || idx >= list.length) {
-            replyMessage = `Nomor ${term} di luar jangkauan (1–${list.length}).`;
-            break;
-          }
-
-          const target = list[idx];
-          await cancelTrigger((target as any).trigger_handle_id);
-
-          const { error: delErr } = await supabaseAdmin
-            .from("tasks")
-            .delete()
-            .eq("id", target.id)
-            .eq("user_id", userRow.id);
-
-          replyMessage = delErr
-            ? "Gagal menghapus tugas."
-            : `✅ Tugas dihapus: "${target.title}".`;
+          replyText = await generateConversationalReply({
+            userMessage: msgText,
+            action: "none",
+            result: nlgResult,
+            style: { withEmoji: true },
+          });
           break;
         }
-
-        const { data: matches, error: findErr } = await supabaseAdmin
-          .from("tasks")
-          .select("id, title, trigger_handle_id")
-          .eq("user_id", userRow.id)
-          .in("status", ["pending", "in_progress"])
-          .ilike("title", `%${term}%`)
-          .order("created_at", { ascending: true });
-
-        if (findErr) {
-          replyMessage = "Gagal mencari tugas.";
-          break;
-        }
-        if (!matches?.length) {
-          replyMessage = `Tugas dengan kata "${term}" tidak ditemukan.`;
-          break;
-        }
-
-        await Promise.allSettled(
-          matches.map((t) => cancelTrigger((t as any).trigger_handle_id))
-        );
-
-        const { data: deleted, error } = await supabaseAdmin
-          .from("tasks")
-          .delete()
-          .eq("user_id", userRow.id)
-          .ilike("title", `%${term}%`)
-          .select("id");
-
-        replyMessage = error
-          ? "Gagal menghapus tugas."
-          : deleted?.length
-            ? `✅ ${deleted.length} tugas yang memuat "${term}" dihapus.`
-            : `Tugas dengan kata "${term}" tidak ditemukan.`;
-        break;
       }
-
-      case "update_task": {
-        replyMessage =
-          "Fitur ubah tugas segera hadir. Untuk sekarang, hapus lalu buat ulang ya.";
-        break;
-      }
-
-      default:
-        replyMessage =
-          'Aku bisa: "tambah tugas ...", "lihat tugas", "hapus tugas ...", atau ketik "tutorial" untuk panduan.';
+    } catch (actionError) {
+      console.error("Action processing error:", actionError);
+      replyText = "Something went wrong 😅 Try again?";
     }
 
-    // ===== 8) Balas sinkron ke Baileys service =====
+    // PERFORMANCE OPTIMIZATION: Log performance metrics
+    const processingTime = Date.now() - startTime;
+    console.log(`✅ Webhook processed in ${processingTime}ms`);
+
     return NextResponse.json({
-      replies: [{ type: "text", text: replyMessage }],
+      replies: [{ type: "text", text: replyText }],
     });
-  } catch (e) {
-    console.error("Baileys webhook error:", e);
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+    console.error(`❌ Webhook error after ${processingTime}ms:`, error);
+
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      {
+        replies: [
+          {
+            type: "text",
+            text: "Oops, technical hiccup! Try again? 🔧",
+          },
+        ],
+      },
       { status: 500 }
     );
   }

@@ -1,3 +1,4 @@
+// app/suspended/page.tsx
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { Button } from "@/components/ui/button"

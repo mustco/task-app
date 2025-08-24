@@ -1,52 +1,46 @@
-// app/components/dashboard/dashboard-layout.tsx (SECURE & OPTIMIZED VERSION)
+// app/components/dashboard/dashboard-layout.tsx (UI-polish only)
 
 "use client";
 
 import type React from "react";
-import { useState,useEffect, useTransition } from "react"; // Import useTransition
+import { useState, useEffect, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import Image from "next/image";
-import type { User } from "@/lib/types"; // Pastikan User type Anda mencakup semua properti yang digunakan
+import type { User } from "@/lib/types";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuLabel, // Tambahkan ini untuk label di dropdown
-  DropdownMenuSeparator, // Tambahkan ini untuk separator
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LogOut, UserIcon, Shield, Loader2 } from "lucide-react"; // Tambahkan Loader2
+import { LogOut, UserIcon, Shield, Loader2 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
-  user: User | null; // user prop sudah diberikan dari Server Component yang sudah diautentikasi
+  user: User | null;
 }
 
 export function DashboardLayout({ children, user }: DashboardLayoutProps) {
-  // `loading` state untuk handle loading UI for sign out button
   const [loading, setLoading] = useState(false);
-  // `isPending` dari useTransition untuk non-blocking navigasi
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const { toast } = useToast();
-  const supabase = createClient(); // Client-side Supabase client
+  const supabase = createClient();
 
   const handleSignOut = async () => {
     setLoading(true);
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error("Supabase sign out error:", error); // Log error dari Supabase
+      if (error)
         throw new Error(error.message || "Failed to sign out from Supabase.");
-      }
 
-      // Menggunakan startTransition untuk navigasi yang non-blocking
-      // Ini akan mencegah UI membeku saat navigasi dan refresh
       startTransition(() => {
         router.push("/login");
         router.refresh();
@@ -57,9 +51,8 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
         description: "You have been signed out successfully.",
       });
     } catch (error: any) {
-      console.error("Error during sign out:", error); // Log error detail untuk debugging
       toast({
-        title: "Sign Out Failed", // Judul yang lebih spesifik
+        title: "Sign Out Failed",
         description:
           error.message || "An unexpected error occurred during sign out.",
         variant: "destructive",
@@ -69,120 +62,127 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
     }
   };
 
-  // Keamanan: Validasi `user` prop secara dasar
-  // Meskipun `page.tsx` sudah melakukan redirect, ini lapisan jaga-jaga
+  // Guard jika user null (tidak mengubah logic, hanya tetap ada)
   if (!user) {
-    // Pada client-side, jika user prop tiba-tiba null,
-    // mungkin ada ketidaksesuaian atau sesi sudah berakhir.
-    // Redirect ke login untuk re-autentikasi.
-    // Hindari render konten dashboard yang kosong/rusak.
-    // Ini juga bisa terjadi jika initial hydration gagal.
-    console.warn("DashboardLayout received null user. Redirecting to login.");
-    // Menggunakan effect untuk redirect agar tidak mengganggu rendering awal
     useEffect(() => {
       router.push("/login");
       router.refresh();
     }, [router]);
-    return null; // Tidak render apapun sampai redirect
+    return null;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Link
-                href="/dashboard"
-                className="flex items-center" // Tambahkan flex items-center untuk centering logo
-              >
-                <Image
-                  src="/listkuu.png"
-                  alt="ListKu Logo"
-                  width={100}
-                  height={100}
-                  priority // Optimasi: preload gambar ini
-                  className="h-8 w-auto object-contain" // Tambahkan object-contain untuk rasio aspek
-                />
-              </Link>
-              <div className="ml-10 flex space-x-8">
-                {/* Keamanan: Pastikan role admin diperiksa dari user prop yang sudah dari server */}
-                {user.role === "admin" && (
-                  <Link
-                    href="/admin"
-                    className="text-gray-900 hover:text-gray-700 px-3 py-2 rounded-md text-sm font-medium flex items-center gap-1"
-                  >
-                    <Shield className="w-4 h-4" />
-                    Admin
-                  </Link>
-                )}
-              </div>
-            </div>
+    <div className="relative min-h-screen">
+      {/* Background grid + glow */}
+      {/* <div className="pointer-events-none absolute inset-0 -z-10 bg-background">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#4f4f4f20_1px,transparent_1px),linear-gradient(to_bottom,#4f4f4f20_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_95%_70%_at_50%_-10%,#000_60%,transparent_100%)]" />
+        <div className="absolute inset-0 -z-20 bg-[radial-gradient(70%_50%_at_50%_-10%,hsl(var(--glow-start)/0.10),transparent_60%)]" />
+      </div> */}
 
-            <div className="flex items-center space-x-4">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="relative h-8 w-8 rounded-full"
-                    disabled={loading || isPending} // Disable trigger while loading/pending
-                  >
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>
-                        {/* Optimasi: String operation lebih aman dari null */}
-                        {user.name
-                          ? user.name.charAt(0).toUpperCase()
-                          : user.email?.charAt(0).toUpperCase() || "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="end" forceMount>
-                  <DropdownMenuLabel>
-                    <div className="flex flex-col space-y-1">
-                      <p className="font-medium">{user.name || "User"}</p>{" "}
-                      {/* Default 'User' jika nama kosong */}
-                      <p className="text-xs text-muted-foreground">
-                        {user.email}
-                      </p>
-                      {/* Pastikan properti user ada sebelum diakses */}
-                      {user.role && (
-                        <p className="text-xs text-muted-foreground capitalize">
-                          {user.role}{" "}
-                          {user.subscription_plan
-                            ? `• ${user.subscription_plan}`
-                            : ""}
-                        </p>
-                      )}
-                    </div>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator /> {/* Separator untuk pemisah */}
-                  <DropdownMenuItem asChild>
-                    <Link href="/profile" className="flex items-center gap-2">
-                      <UserIcon className="w-4 h-4" />
-                      Profile
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={handleSignOut}
-                    disabled={loading || isPending}
-                  >
-                    {loading || isPending ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <LogOut className="w-4 h-4 mr-2" />
-                    )}
-                    {loading || isPending ? "Signing out..." : "Sign out"}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+      {/* Sticky Nav */}
+      <nav className="sticky top-0 z-40 w-full border-b bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/60">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          {/* Left: logo + nav links */}
+          <div className="flex items-center gap-6">
+            <Link href="/dashboard" className="flex items-center">
+              <Image
+                src="/listkuu.png"
+                alt="ListKu Logo"
+                width={100}
+                height={100}
+                priority
+                className="h-8 w-auto object-contain"
+              />
+            </Link>
+
+            <div className="hidden md:flex md:items-center md:gap-1">
+              {user.role === "admin" && (
+                <Link
+                  href="/admin"
+                  className="rounded-md px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Shield className="h-4 w-4" /> Admin
+                  </span>
+                </Link>
+              )}
             </div>
+          </div>
+
+          {/* Right: user menu */}
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="relative h-9 w-9 rounded-full p-0"
+                  disabled={loading || isPending}
+                >
+                  <Avatar className="h-9 w-9">
+                    <AvatarFallback className="text-sm">
+                      {(
+                        user.name?.charAt(0) ||
+                        user.email?.charAt(0) ||
+                        "U"
+                      ).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+
+              <DropdownMenuContent
+                className="w-60"
+                align="end"
+                sideOffset={8}
+                forceMount
+              >
+                <DropdownMenuLabel>
+                  <div className="flex flex-col">
+                    <p className="font-medium leading-tight">
+                      {user.name || "User"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user.email}
+                    </p>
+                    {user.role && (
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {user.role}
+                        {user.subscription_plan
+                          ? ` • ${user.subscription_plan}`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/profile" className="flex items-center gap-2">
+                    <UserIcon className="h-4 w-4" />
+                    Profile
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleSignOut}
+                  disabled={loading || isPending}
+                >
+                  {loading || isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <LogOut className="mr-2 h-4 w-4" />
+                  )}
+                  {loading || isPending ? "Signing out..." : "Sign out"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        <div className="px-4 py-6 sm:px-0">{children}</div>
+      {/* Main */}
+      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="rounded-2xl border bg-white/70 p-4 shadow-sm backdrop-blur sm:p-6">
+          {children}
+        </div>
       </main>
     </div>
   );

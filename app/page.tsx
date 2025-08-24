@@ -1,3 +1,4 @@
+//app/page.tsx
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -15,7 +16,8 @@ export default async function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen  flex items-center justify-center p-4">
+      
       <div className="max-w-4xl mx-auto text-center flex flex-col items-center justify-center">
         <Image
           src="/listkuu.png"

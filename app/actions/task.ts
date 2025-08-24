@@ -140,18 +140,19 @@ export async function createTask(formData: FormData) {
       .select()
       .single();
 
-    if (supabaseError) {
-      if (
-        supabaseError.message.includes("violates row-level security policy")
-      ) {
-        return {
-          success: false,
-          message:
-            "Aksi ditolak! Fitur ini hanya tersedia untuk pengguna Premium. Silakan upgrade akun Anda.",
-        };
-      }
-      throw supabaseError;
-    }
+   if (supabaseError) {
+     console.error("Supabase insert error:", {
+       message: supabaseError.message,
+       details: supabaseError.details,
+       hint: supabaseError.hint,
+       code: (supabaseError as any).code,
+     });
+     if (supabaseError.message.includes("violates row-level security policy")) {
+       return { success: false, message: "Aksi ditolak oleh policy RLS." };
+     }
+     throw supabaseError;
+   }
+
 
     if (parsed.data.showReminder && newTask) {
       const baseUrl = getAppBaseUrl();

@@ -1,10 +1,10 @@
+// app/actions/editTask.ts
 "use server";
 
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { headers, cookies } from "next/headers";
 
-// Schema untuk edit (tambahkan id + status)
 const editSchema = z
   .object({
     id: z.string().uuid("Invalid task id."),
@@ -79,7 +79,7 @@ export async function editTask(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) return { success: false, message: "User not authenticated." };
 
-  // ambil task lama (buat compare)
+  // ambil task lama (untuk otorisasi/merge return)
   const taskId = getStr(formData, "id");
   if (!taskId) return { success: false, message: "Task id is required." };
 
@@ -96,7 +96,7 @@ export async function editTask(formData: FormData) {
     return { success: false, message: "Task not found or permission denied." };
   }
 
-  // normalisasi form
+  // normalize payload
   const raw = {
     id: taskId,
     title: getStr(formData, "title"),
@@ -123,7 +123,7 @@ export async function editTask(formData: FormData) {
 
   const d = parsed.data;
 
-  // build update payload
+  // build updates
   const updates = {
     title: d.title,
     description: d.description || null,
@@ -135,7 +135,7 @@ export async function editTask(formData: FormData) {
     target_phone: d.showReminder ? d.target_phone || null : null,
   };
 
-  // update (tanpa .select() biar gak extra round-trip)
+  // update DB
   const { error: upErr } = await supabase
     .from("tasks")
     .update(updates)
@@ -149,7 +149,6 @@ export async function editTask(formData: FormData) {
     return { success: false, message: msg };
   }
 
-  // synthesize object updated untuk UI
   const updated = {
     ...oldTask,
     ...updates,
@@ -157,49 +156,40 @@ export async function editTask(formData: FormData) {
     user_id: oldTask.user_id,
   };
 
-  // cek perubahan yang berpengaruh ke reminder
-  const reminderChanged =
-    (oldTask.remind_method ?? null) !== (updates.remind_method ?? null) ||
-    (oldTask.reminder_days ?? null) !== (updates.reminder_days ?? null) ||
-    (oldTask.target_email ?? null) !== (updates.target_email ?? null) ||
-    (oldTask.target_phone ?? null) !== (updates.target_phone ?? null) ||
-    new Date(oldTask.deadline).toISOString() !== updates.deadline;
+  // === 🔁 ALWAYS reschedule on any edit (title/desc/status/deadline/etc) ===
+  const h = headers();
+  const host = h.get("x-forwarded-host") || h.get("host");
+  const proto = h.get("x-forwarded-proto") || "https";
 
-  // kalau berubah → panggil /api/reschedule-reminder dengan host dari header (CARA B)
-  if (reminderChanged) {
-    const h = headers();
-    const host = h.get("x-forwarded-host") || h.get("host");
-    const proto = h.get("x-forwarded-proto") || "https";
-    if (host) {
-      const url = `${proto}://${host}/api/reschedule-reminder`;
-      const cookieHeader = cookies().toString();
+  if (host) {
+    const url = `${proto}://${host}/api/reschedule-reminder`;
+    const cookieHeader = cookies().toString();
 
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: cookieHeader,
-          },
-          body: JSON.stringify({
-            taskId,
-            hasReminder: Boolean(updates.remind_method),
-          }),
-          cache: "no-store",
-        });
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: cookieHeader,
+        },
+        body: JSON.stringify({
+          taskId,
+          hasReminder: Boolean(updates.remind_method), // true = jadwalkan baru, false = cancel
+        }),
+        cache: "no-store",
+      });
 
-        if (!response.ok) {
-          const errorBody = await response.text();
-          console.error(
-            `Error in background reschedule: ${response.status} - ${errorBody}`
-          );
-        }
-      } catch (err) {
-        console.error("Background reminder rescheduling failed:", err);
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error(
+          `Error in background reschedule: ${response.status} - ${errorBody}`
+        );
       }
-    } else {
-      console.error("Unable to resolve host for reschedule-reminder call.");
+    } catch (err) {
+      console.error("Background reminder rescheduling failed:", err);
     }
+  } else {
+    console.error("Unable to resolve host for reschedule-reminder call.");
   }
 
   return {

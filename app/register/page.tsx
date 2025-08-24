@@ -1,20 +1,89 @@
-import { RegisterForm } from "@/components/auth/register-form"
-import Link from "next/link"
+import { RegisterForm } from "@/components/auth/register-form";
+import Image from "next/image";
+import Link from "next/link";
+import { Card } from "@/components/ui/card";
+
 export default function RegisterPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">Create your account</h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Or{" "}
-            <Link href="/login" className="font-medium text-indigo-600 hover:text-indigo-500">
-              sign in to your existing account
-            </Link>
-          </p>
-        </div>
-        <RegisterForm />
+    <div className="relative min-h-screen overflow-hidden">
+      <div className="absolute inset-0 -z-10 bg-background" />
+      <div className="pointer-events-none absolute -inset-20 -z-10 blobs">
+        <div className="absolute left-[10%] top-[15%] h-64 w-64 rounded-full bg-fuchsia-500/25 animate-blob" />
+        <div className="absolute right-[15%] top-[10%] h-72 w-72 rounded-full bg-sky-400/25 animate-blob [animation-delay:4s]" />
+        <div className="absolute left-[20%] bottom-[10%] h-80 w-80 rounded-full bg-emerald-400/20 animate-blob [animation-delay:8s]" />
+      </div>
+
+      {/* Container */}
+      <div className="mx-auto flex min-h-screen max-w-5xl items-center px-4 py-10">
+        <Card className="w-full overflow-hidden shadow-xl md:grid md:grid-cols-2 md:rounded-2xl rounded-2xl border bg-white/70 p-4  backdrop-blur sm:p-6">
+          {/* Left pane */}
+          <div className="relative hidden items-center justify-center p-10 md:flex">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_60%_at_50%_30%,hsl(var(--primary)/0.15),transparent)]" />
+            <div className="relative z-10 space-y-6">
+              <div className="flex items-center gap-3">
+                <Image
+                  src="/listkuu.png"
+                  alt="ListKu Logo"
+                  width={44}
+                  height={44}
+                  className="h-11 w-11 rounded-md object-contain"
+                  priority
+                />
+                <span className="text-xl font-semibold tracking-tight">
+                  ListKu
+                </span>
+              </div>
+              <h2 className="text-3xl font-bold leading-tight">
+                Mulai rapiin tugasmu ✨
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Buat akun sekali, nikmati pengingat pintar, sinkron ke WhatsApp,
+                dan tampilan dashboard yang ringan.
+              </p>
+              <div className="text-xs text-muted-foreground/80">
+                Sudah punya akun?{" "}
+                <Link
+                  href="/login"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Masuk di sini
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Right pane / form */}
+          <div className="p-6 sm:p-8 md:p-10">
+            <div className="mb-8 flex items-center justify-center md:hidden">
+              <Image
+                src="/listkuu.png"
+                alt="ListKu Logo"
+                width={150}
+                height={150}
+                priority
+                className="h-10 w-auto object-contain"
+              />
+            </div>
+
+            <div className="mb-6 text-center md:text-left">
+              <h1 className="text-2xl font-bold tracking-tight">
+                Create your account
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Or{" "}
+                <Link
+                  href="/login"
+                  className="font-medium text-primary/80 transition-colors hover:text-primary"
+                >
+                  sign in to your existing account
+                </Link>
+              </p>
+            </div>
+
+            <RegisterForm />
+          </div>
+        </Card>
       </div>
     </div>
-  )
+  );
 }

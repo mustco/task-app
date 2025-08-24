@@ -1,3 +1,4 @@
+//app/admin/page.tsx
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
@@ -44,8 +45,8 @@ export default async function AdminPage() {
     <DashboardLayout user={userProfile}>
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-          <p className="text-gray-600">Manage users and system statistics</p>
+          <h1 className="text-3xl font-bold text-foreground">Admin Dashboard</h1>
+          <p className="text-muted-foreground">Manage users and system statistics</p>
         </div>
 
         <AdminStats
