@@ -263,6 +263,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
+    if (parsed.data.isGroup) {
+      return NextResponse.json({ status: "ignored", reason: "group message" });
+    }
+
     const { from, text } = parsed.data;
     const msgText = String(text || "").trim();
 
@@ -335,15 +339,10 @@ export async function POST(request: Request) {
     }
 
     if (!userRow?.id) {
-      return NextResponse.json({
-        replies: [
-          {
-            type: "text",
-            text: "Hi! Register dulu di web ListKu untuk mulai chatting ya! 😊",
-          },
-        ],
-      });
+      // ✨ jangan balas ke siapapun jika nomor tidak dikenal
+      return NextResponse.json({ status: "ignored", reason: "unregistered sender" });
     }
+    
 
     // PERFORMANCE OPTIMIZATION: Handle quick view command
     if (quickCmd === "VIEW_TASKS") {
