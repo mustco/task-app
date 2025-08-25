@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Mail, ArrowLeft } from "lucide-react";
 
 export function RegisterForm() {
   const [email, setEmail] = useState("");
@@ -16,6 +16,7 @@ export function RegisterForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [isEmailSent, setIsEmailSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -37,40 +38,111 @@ export function RegisterForm() {
       return;
     }
 
+    // Basic password strength validation
+    if (password.length < 6) {
+      toast({
+        title: "Error",
+        description: "Kata sandi harus minimal 6 karakter",
+        variant: "destructive",
+      });
+      setLoading(false);
+      return;
+    }
+
     try {
       const { error } = await supabase.auth.signUp({
         email,
-  password,
-  options: {
-    emailRedirectTo: `${origin}/auth/callback`, // <— ini penting
-    data: { name, phone_number: phone || null },
-  },
+        password,
+        options: {
+          emailRedirectTo: `${origin}/auth/callback?type=signup`,
+          data: { name, phone_number: phone || null },
+        },
       });
 
       if (error) {
-        toast({
-          title: "Error",
-          description: error.message,
-          variant: "destructive",
-        });
+        // Handle specific error cases
+        if (error.message.includes('already registered')) {
+          toast({
+            title: "Email Sudah Terdaftar",
+            description: "Email ini sudah terdaftar. Silakan gunakan email lain atau masuk ke akun Anda.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: error.message,
+            variant: "destructive",
+          });
+        }
       } else {
+        setIsEmailSent(true);
         toast({
-          title: "Berhasil",
-          description:
-            "Akun berhasil dibuat! Periksa email Anda untuk memverifikasi akun.",
+          title: "Berhasil!",
+          description: "Akun berhasil dibuat! Periksa email Anda untuk mengonfirmasi akun.",
+          duration: 6000,
         });
-        router.push("/login");
       }
     } catch {
       toast({
         title: "Error",
-        description: "Terjadi kesalahan yang tidak terduga",
+        description: "Terjadi kesalahan yang tidak terduga. Silakan coba lagi.",
         variant: "destructive",
       });
     } finally {
       setLoading(false);
     }
   };
+
+  // If email verification has been sent, show confirmation message
+  if (isEmailSent) {
+    return (
+      <div className="space-y-6 text-center">
+        <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+          <Mail className="h-8 w-8 text-green-600" />
+        </div>
+        
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold">Periksa Email Anda</h3>
+          <p className="text-sm text-muted-foreground">
+            Kami telah mengirim tautan konfirmasi ke <strong>{email}</strong>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Klik tautan di email untuk mengaktifkan akun Anda. Jika tidak ada di kotak masuk, 
+            periksa folder spam.
+          </p>
+        </div>
+        
+        <div className="space-y-3">
+          <Button 
+            onClick={() => {
+              setIsEmailSent(false);
+              setEmail("");
+              setPassword("");
+              setConfirmPassword("");
+              setName("");
+              setPhone("");
+            }}
+            variant="outline" 
+            className="w-full"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Coba Email Lain
+          </Button>
+          
+          <p className="text-xs text-muted-foreground">
+            Sudah mengonfirmasi email?{" "}
+            <button
+              type="button"
+              onClick={() => router.push("/login")}
+              className="font-medium text-primary hover:underline"
+            >
+              Masuk sekarang
+            </button>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
