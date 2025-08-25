@@ -14,24 +14,24 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
 
   const getStatusBadge = () => {
     if (isActive) {
-      return <Badge className="bg-green-100 text-green-800">Active</Badge>;
+      return <Badge className="bg-green-100 text-green-800">Aktif</Badge>;
     }
-    return <Badge className="bg-red-100 text-red-800">Inactive</Badge>;
+    return <Badge className="bg-red-100 text-red-800">Tidak Aktif</Badge>;
   };
 
   const getPlanFeatures = () => {
     if (isFreePlan) {
-      return "Basic notes management with email notifications";
+      return "Manajemen catatan dasar dengan notifikasi email";
     }
-    return "Advanced notes management with WhatsApp & email notifications, unlimited notes, and priority support";
+    return "Manajemen catatan lanjutan dengan notifikasi WhatsApp & email, catatan tak terbatas, dan dukungan prioritas";
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Subscription Status</CardTitle>
+        <CardTitle>Status Langganan</CardTitle>
         <p className="text-sm text-gray-600">
-          Your current plan and billing information
+          Paket saat ini dan informasi tagihan Anda
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -46,7 +46,7 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
             <p className="text-sm text-gray-600">{getPlanFeatures()}</p>
             {user?.subscription_expires_at && (
               <p className="text-xs text-gray-500 mt-1">
-                {isActive ? "Expires" : "Expired"} on{" "}
+                {isActive ? "Berakhir" : "Kedaluwarsa"} pada{" "}
                 {new Date(user.subscription_expires_at).toLocaleDateString()}
               </p>
             )}
@@ -56,11 +56,11 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
         {isFreePlan && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Upgrade to Premium for WhatsApp notifications and advanced
-              features.
+              Upgrade ke Premium untuk notifikasi WhatsApp dan fitur
+              lanjutan.
             </p>
             <Button disabled className="w-full">
-              Upgrade Plan (Coming Soon)
+              Upgrade Paket (Segera Hadir)
             </Button>
           </div>
         )}
@@ -68,45 +68,45 @@ export function SubscriptionStatus({ user }: SubscriptionStatusProps) {
         {isPremium && (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              You're enjoying all premium features! Thank you for your support.
+              Anda menikmati semua fitur premium! Terima kasih atas dukungan Anda.
             </p>
             <Button
               variant="outline"
               disabled
               className="w-full bg-transparent"
             >
-              Manage Subscription (Coming Soon)
+              Kelola Langganan (Segera Hadir)
             </Button>
           </div>
         )}
 
         <div className="pt-4 border-t">
-          <h4 className="font-medium mb-2">Plan Comparison</h4>
+          <h4 className="font-medium mb-2">Perbandingan Paket</h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span>Email Notifications</span>
-              <span className="text-green-600">✓ All Plans</span>
+              <span>Notifikasi Email</span>
+              <span className="text-green-600">✓ Semua Paket</span>
             </div>
             <div className="flex justify-between">
-              <span>WhatsApp Notifications</span>
+              <span>Notifikasi WhatsApp</span>
               <span className={isPremium ? "text-green-600" : "text-gray-400"}>
                 {isPremium ? "✓ Premium" : "Premium Only"}
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Unlimited Notes</span>
+              <span>Catatan Tak Terbatas</span>
               <span className={isPremium ? "text-green-600" : "text-gray-400"}>
                 {isPremium ? "✓ Premium" : "Premium Only"}
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Priority Support</span>
+              <span>Dukungan Prioritas</span>
               <span className={isPremium ? "text-green-600" : "text-gray-400"}>
                 {isPremium ? "✓ Premium" : "Premium Only"}
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Advanced Analytics</span>
+              <span>Analitik Lanjutan</span>
               <span className={isPremium ? "text-green-600" : "text-gray-400"}>
                 {isPremium ? "✓ Premium" : "Premium Only"}
               </span>

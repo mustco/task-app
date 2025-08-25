@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 
 export function RegisterForm() {
   const [email, setEmail] = useState("");
@@ -16,6 +17,8 @@ export function RegisterForm() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const { toast } = useToast();
   const router = useRouter();
   const supabase = createClient();
@@ -27,7 +30,7 @@ export function RegisterForm() {
     if (password !== confirmPassword) {
       toast({
         title: "Error",
-        description: "Passwords do not match",
+        description: "Kata sandi tidak cocok",
         variant: "destructive",
       });
       setLoading(false);
@@ -52,16 +55,16 @@ export function RegisterForm() {
         });
       } else {
         toast({
-          title: "Success",
+          title: "Berhasil",
           description:
-            "Account created! Check your email to verify your account.",
+            "Akun berhasil dibuat! Periksa email Anda untuk memverifikasi akun.",
         });
         router.push("/login");
       }
     } catch {
       toast({
         title: "Error",
-        description: "Unexpected error",
+        description: "Terjadi kesalahan yang tidak terduga",
         variant: "destructive",
       });
     } finally {
@@ -74,34 +77,34 @@ export function RegisterForm() {
       {/* name & email side-by-side on md+ */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="name">Full Name</Label>
+          <Label htmlFor="name">Nama Lengkap</Label>
           <Input
             id="name"
             name="name"
             type="text"
             autoComplete="name"
             required
-            placeholder="Your Name"
+            placeholder="Nama Anda"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="email">Email address</Label>
+          <Label htmlFor="email">Alamat email</Label>
           <Input
             id="email"
             name="email"
             type="email"
             autoComplete="email"
             required
-            placeholder="name@example.com"
+            placeholder="nama@contoh.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
       </div>
 
-      <div className="space-y-2">
+      {/* <div className="space-y-2">
         <Label htmlFor="phone">Phone Number (Optional)</Label>
         <Input
           id="phone"
@@ -112,17 +115,17 @@ export function RegisterForm() {
           onChange={(e) => setPhone(e.target.value)}
           placeholder="e.g., 081234567890"
         />
-      </div>
+      </div> */}
 
       <div className="space-y-2">
-        <Label htmlFor="phone">Phone Number (Optional)</Label>
+        <Label htmlFor="phone">Nomor Telepon (Opsional)</Label>
         <div className="relative">
           <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-muted-foreground select-none">
             +62
           </span>
           <Input
-            id="contactNumber"
-            name="contactNumber"
+            id="phone"
+            name="phone"
             type="tel"
             inputMode="numeric"
             autoComplete="tel"
@@ -131,7 +134,6 @@ export function RegisterForm() {
             pattern="^[1-9][0-9]{7,12}$"
             title="Masukkan 8–13 digit tanpa awalan 0 atau 62 (contoh: 813xxxxxxx)"
             maxLength={13}
-            required
             className="pl-12" // penting: kasih ruang untuk prefix
             value={
               // tampilkan hanya digit lokal setelah +62 (opsional, jika kamu simpan full di state `phone`)
@@ -147,37 +149,62 @@ export function RegisterForm() {
             }}
           />
         </div>
-        <p className="text-xs text-muted-foreground">
-          Tersimpan sebagai: {phone || "—"}
-        </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
-          <Input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <Label htmlFor="password">Kata Sandi</Label>
+          <div className="relative">
+            <Input
+              id="password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              required
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="pr-10"
+            />
+            <button
+              type="button"
+              className="absolute inset-y-0 right-0 flex items-center pr-3"
+              onClick={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4 text-gray-400" />
+              ) : (
+                <Eye className="h-4 w-4 text-gray-400" />
+              )}
+            </button>
+          </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="confirmPassword">Confirm Password</Label>
-          <Input
-            id="confirmPassword"
-            name="confirmPassword"
-            type="password"
-            autoComplete="new-password"
-            required
-            placeholder="••••••••"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
+          <Label htmlFor="confirmPassword">Konfirmasi Kata Sandi</Label>
+          <div className="relative">
+            <Input
+              id="confirmPassword"
+              name="confirmPassword"
+              type={showConfirmPassword ? "text" : "password"}
+              autoComplete="new-password"
+              required
+              placeholder="••••••••"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              className="pr-10"
+            />
+            <button
+              type="button"
+              className="absolute inset-y-0 right-0 flex items-center pr-3"
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+            >
+              {showConfirmPassword ? (
+                <EyeOff className="h-4 w-4 text-gray-400" />
+              ) : (
+                <Eye className="h-4 w-4 text-gray-400" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -186,7 +213,7 @@ export function RegisterForm() {
         className="h-11 w-full text-base"
         disabled={loading}
       >
-        {loading ? "Creating account..." : "Create account"}
+        {loading ? "Membuat akun..." : "Buat akun"}
       </Button>
     </form>
   );

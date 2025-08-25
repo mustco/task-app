@@ -49,13 +49,13 @@ export function ProfileForm({ user }: ProfileFormProps) {
       if (profileError) throw profileError;
 
       toast({
-        title: "Success",
-        description: "Profile updated successfully.",
+        title: "Berhasil",
+        description: "Profil berhasil diperbarui.",
       });
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update profile.",
+        description: error.message || "Gagal memperbarui profil.",
         variant: "destructive",
       });
     } finally {
@@ -70,7 +70,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     if (newPassword !== confirmPassword) {
       toast({
         title: "Error",
-        description: "New passwords do not match",
+        description: "Kata sandi baru tidak cocok",
         variant: "destructive",
       });
       setPasswordLoading(false);
@@ -85,8 +85,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
       if (error) throw error;
 
       toast({
-        title: "Success",
-        description: "Password updated successfully.",
+        title: "Berhasil",
+        description: "Kata sandi berhasil diperbarui.",
       });
 
       setNewPassword("");
@@ -94,7 +94,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "Failed to update password.",
+        description: error.message || "Gagal memperbarui kata sandi.",
         variant: "destructive",
       });
     } finally {
@@ -107,13 +107,13 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {/* Profile Info */}
       <Card>
         <CardHeader>
-          <CardTitle>Account Information</CardTitle>
+          <CardTitle>Informasi Akun</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleUpdateProfile} className="space-y-4">
             {/* Name */}
             <div>
-              <Label htmlFor="name">Full Name</Label>
+              <Label htmlFor="name">Nama Lengkap</Label>
               <Input
                 id="name"
                 type="text"
@@ -125,7 +125,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
             {/* Email */}
             <div>
-              <Label htmlFor="email">Email (For Reminder)</Label>
+              <Label htmlFor="email">Email (Untuk Pengingat)</Label>
               <Input
                 id="email"
                 type="email"
@@ -137,7 +137,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
             {/* Phone Number */}
             <div>
-              <Label htmlFor="phone">Phone Number (For Reminder)</Label>
+              <Label htmlFor="phone">Nomor Telepon (Untuk Pengingat)</Label>
               <Input
                 id="phone"
                 type="tel"
@@ -154,7 +154,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
                 onValueChange={(value) => setIsPremium(value === "true")}
               >
                 <SelectTrigger id="premium">
-                  <SelectValue placeholder="Select plan" />
+                  <SelectValue placeholder="Pilih paket" />
                 </SelectTrigger>
                 <SelectContent className="glassmorphism rounded-xl">
                   <SelectItem value="false">False</SelectItem>
@@ -164,7 +164,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
             </div>
 
             <Button type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Update Profile"}
+              {loading ? "Memperbarui..." : "Perbarui Profil"}
             </Button>
           </form>
         </CardContent>
@@ -173,12 +173,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {/* Password Section */}
       <Card>
         <CardHeader>
-          <CardTitle>Change Password</CardTitle>
+          <CardTitle>Ubah Kata Sandi</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleUpdatePassword} className="space-y-4">
             <div>
-              <Label htmlFor="newPassword">New Password</Label>
+              <Label htmlFor="newPassword">Kata Sandi Baru</Label>
               <Input
                 id="newPassword"
                 type="password"
@@ -189,7 +189,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
             </div>
 
             <div>
-              <Label htmlFor="confirmPassword">Confirm New Password</Label>
+              <Label htmlFor="confirmPassword">Konfirmasi Kata Sandi Baru</Label>
               <Input
                 id="confirmPassword"
                 type="password"
@@ -200,7 +200,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
             </div>
 
             <Button type="submit" disabled={passwordLoading}>
-              {passwordLoading ? "Updating..." : "Update Password"}
+              {passwordLoading ? "Memperbarui..." : "Perbarui Kata Sandi"}
             </Button>
           </form>
         </CardContent>
