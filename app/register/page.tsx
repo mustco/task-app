@@ -9,6 +9,7 @@ export default function RegisterPage() {
       <div className="absolute inset-0 -z-10 bg-background" />
       <div className="pointer-events-none absolute -inset-20 -z-10 blobs">
         <div className="absolute left-[10%] top-[15%] h-64 w-64 rounded-full bg-fuchsia-500/25 animate-blob" />
+        <div className="absolute left-[50%] top-[55%] h-64 w-64 rounded-full bg-fuchsia-500/25 animate-blob" />
         <div className="absolute right-[15%] top-[10%] h-72 w-72 rounded-full bg-sky-400/25 animate-blob [animation-delay:4s]" />
         <div className="absolute left-[20%] bottom-[10%] h-80 w-80 rounded-full bg-emerald-400/20 animate-blob [animation-delay:8s]" />
       </div>
@@ -26,21 +27,18 @@ export default function RegisterPage() {
                   alt="ListKu Logo"
                   width={44}
                   height={44}
-                  className="h-11 w-11 rounded-md object-contain"
+                  className="h-10 w-auto rounded-md object-contain"
                   priority
                 />
-                <span className="text-xl font-semibold tracking-tight">
-                  ListKu
-                </span>
+               
               </div>
               <h2 className="text-3xl font-bold leading-tight">
-                Mulai rapiin tugasmu ✨
+                Mulai atur tugas Anda ✨
               </h2>
               <p className="text-sm text-muted-foreground">
-                Buat akun sekali, nikmati pengingat pintar, sinkron ke WhatsApp,
-                dan tampilan dashboard yang ringan.
+                Buat akun sekali, lalu nikmati pengingat pintar, sinkronisasi WhatsApp, dan dashboard yang ringan.
               </p>
-              <div className="text-xs text-muted-foreground/80">
+              <div className="text-sm text-muted-foreground/90">
                 Sudah punya akun?{" "}
                 <Link
                   href="/login"
@@ -67,15 +65,15 @@ export default function RegisterPage() {
 
             <div className="mb-6 text-center md:text-left">
               <h1 className="text-2xl font-bold tracking-tight">
-                Create your account
+                Buat akun Anda
               </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Or{" "}
+              <p className="mt-2 text-sm text-muted-foreground md:hidden">
+                Atau{" "}
                 <Link
                   href="/login"
                   className="font-medium text-primary/80 transition-colors hover:text-primary"
                 >
-                  sign in to your existing account
+                  masuk di sini
                 </Link>
               </p>
             </div>

@@ -44,14 +44,16 @@ export async function updateSession(request: NextRequest) {
   const protectedRoutes = ["/dashboard", "/profile"]
   const adminRoutes = ["/admin"]
   const authRoutes = ["/login", "/register"]
+  const passwordResetRoutes = ["/forgot-password", "/reset-password"]
 
   const isProtectedRoute = protectedRoutes.some((route) => request.nextUrl.pathname.startsWith(route))
   const isAdminRoute = adminRoutes.some((route) => request.nextUrl.pathname.startsWith(route))
   const isAuthRoute = authRoutes.some((route) => request.nextUrl.pathname.startsWith(route))
+  const isPasswordResetRoute = passwordResetRoutes.some((route) => request.nextUrl.pathname.startsWith(route))
 
   // Redirect logic
-  if (isAuthRoute && user) {
-    // If user is logged in and trying to access auth pages, redirect to dashboard
+  if (isAuthRoute && user && !isPasswordResetRoute) {
+    // If user is logged in and trying to access auth pages (but not password reset), redirect to dashboard
     return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 

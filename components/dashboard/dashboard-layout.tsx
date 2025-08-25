@@ -20,7 +20,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LogOut, UserIcon, Shield, Loader2 } from "lucide-react";
+import { LogOut, UserIcon, Shield, Loader2, BarChart3 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -47,14 +47,14 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
       });
 
       toast({
-        title: "Success",
-        description: "You have been signed out successfully.",
+        title: "Berhasil",
+        description: "Anda telah berhasil keluar.",
       });
     } catch (error: any) {
       toast({
-        title: "Sign Out Failed",
+        title: "Gagal Keluar",
         description:
-          error.message || "An unexpected error occurred during sign out.",
+          error.message || "Terjadi kesalahan yang tidak terduga saat keluar.",
         variant: "destructive",
       });
     } finally {
@@ -97,14 +97,24 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
 
             <div className="hidden md:flex md:items-center md:gap-1">
               {user.role === "admin" && (
-                <Link
-                  href="/admin"
-                  className="rounded-md px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 hover:text-gray-800"
-                >
-                  <span className="inline-flex items-center gap-1.5">
-                    <Shield className="h-4 w-4" /> Admin
-                  </span>
-                </Link>
+                <>
+                  <Link
+                    href="/admin"
+                    className="rounded-md px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <Shield className="h-4 w-4" /> Admin
+                    </span>
+                  </Link>
+                  <Link
+                    href="/admin/statistics"
+                    className="rounded-md px-3 py-2 text-sm font-medium text-gray-900 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <BarChart3 className="h-4 w-4" /> Statistics
+                    </span>
+                  </Link>
+                </>
               )}
             </div>
           </div>
@@ -158,7 +168,7 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
                 <DropdownMenuItem asChild>
                   <Link href="/profile" className="flex items-center gap-2">
                     <UserIcon className="h-4 w-4" />
-                    Profile
+                    Profil
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -170,7 +180,7 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
                   ) : (
                     <LogOut className="mr-2 h-4 w-4" />
                   )}
-                  {loading || isPending ? "Signing out..." : "Sign out"}
+                  {loading || isPending ? "Sedang keluar..." : "Keluar"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -180,9 +190,8 @@ export function DashboardLayout({ children, user }: DashboardLayoutProps) {
 
       {/* Main */}
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <div className="rounded-2xl border bg-white/70 p-4 shadow-sm backdrop-blur sm:p-6">
+        {/* <div className="rounded-2xl border bg-white/70 p-4 shadow-sm backdrop-blur sm:p-6"> */}
           {children}
-        </div>
       </main>
     </div>
   );

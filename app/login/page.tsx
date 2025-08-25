@@ -9,6 +9,7 @@ export default function LoginPage() {
       <div className="absolute inset-0 -z-10 bg-background" />
       <div className="pointer-events-none absolute -inset-20 -z-10 blobs">
         <div className="absolute left-[10%] top-[15%] h-64 w-64 rounded-full bg-fuchsia-500/25 animate-blob" />
+        <div className="absolute left-[50%] top-[55%] h-64 w-64 rounded-full bg-fuchsia-500/25 animate-blob" />
         <div className="absolute right-[15%] top-[10%] h-72 w-72 rounded-full bg-sky-400/25 animate-blob [animation-delay:4s]" />
         <div className="absolute left-[20%] bottom-[10%] h-80 w-80 rounded-full bg-emerald-400/20 animate-blob [animation-delay:8s]" />
       </div>
@@ -26,26 +27,24 @@ export default function LoginPage() {
                   alt="ListKu Logo"
                   width={44}
                   height={44}
-                  className="h-11 w-11 rounded-md object-contain"
+                  className="h-10 w-auto rounded-md object-contain"
                   priority
                 />
-                <span className="text-xl font-semibold tracking-tight">
-                  ListKu
-                </span>
+             
               </div>
               <h2 className="text-3xl font-bold leading-tight">
                 Selamat datang kembali 👋
               </h2>
               <p className="text-sm text-muted-foreground">
-                Masuk untuk melihat tugas, reminder, dan progres harianmu.
+                Masuk untuk melihat tugas, pengingat, dan progres harian Anda.
               </p>
-              <div className="text-xs text-muted-foreground/80">
+              <div className="text-sm text-muted-foreground/80">
                 Baru di ListKu?{" "}
                 <Link
                   href="/register"
                   className="font-medium text-primary hover:underline"
                 >
-                  Buat akun sekarang
+                  Buat akun baru
                 </Link>
               </div>
             </div>
@@ -66,15 +65,15 @@ export default function LoginPage() {
 
             <div className="mb-6 text-center md:text-left">
               <h1 className="text-2xl font-bold tracking-tight">
-                Sign in to your account
+                Masuk ke akun Anda
               </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Or{" "}
+              <p className="mt-2 text-sm text-muted-foreground md:hidden">
+                Atau{" "}
                 <Link
                   href="/register"
                   className="font-medium text-primary/80 transition-colors hover:text-primary"
                 >
-                  create a new account
+                  buat akun baru
                 </Link>
               </p>
             </div>

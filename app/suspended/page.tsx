@@ -24,13 +24,13 @@ export default async function SuspendedPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-6 text-center">
         <div className="text-6xl mb-4">🚫</div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-4">Account Suspended</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Akun Dibekukan</h1>
         <p className="text-gray-600 mb-6">
-          Your account has been suspended. Please contact the administrator for more information.
+          Akun Anda telah dibekukan. Silakan hubungi administrator untuk informasi lebih lanjut.
         </p>
         <form action={handleSignOut}>
           <Button type="submit" className="w-full">
-            Sign Out
+            Keluar
           </Button>
         </form>
       </div>

@@ -175,5 +175,7 @@
     66%     { transform: translate(-4%, 5%) scale(.95); }
   }
   .animate-blob { animation: blob 16s ease-in-out infinite; }
+  .animation-delay-2000 { animation-delay: 2s; }
+  .animation-delay-4000 { animation-delay: 4s; }
 }
   
