@@ -7,7 +7,7 @@ import { phoneVariants } from "@/lib/utils/phone";
 import { scheduleTaskReminder } from "../../../../src/trigger/task";
 import validator from "validator";
 import crypto from "node:crypto";
-import { ratelimit } from "@/lib/upstash-ratelimit";
+import { ratelimit, debounceRatelimit, MessageDebouncer } from "@/lib/upstash-ratelimit";
 import { generateConversationalReply } from "@/lib/gemini/reply";
 import { parseTextWithGemini } from "@/lib/gemini/client";
 
@@ -57,8 +57,6 @@ const OPTIMIZED_TUTORIAL = `🤖 *Panduan ListKu AI Assistant*
 • Reminder *belum bisa* untuk jam/menit spesifik → masih terbatas ke H-1, H-2, dst  
 • +62 813-8692-6872 Jangan lupa simpan nomor ListKu ya biar gampang kirim pengingat ke kamu ✨
 `;
-
-
 
 // PERFORMANCE OPTIMIZATION: Security helpers with early returns
 function signBody(rawBody: string, ts: string): string {
@@ -283,15 +281,90 @@ export async function POST(request: Request) {
       senderDigits ? `+${senderDigits}` : senderJid
     );
 
-    // PERFORMANCE OPTIMIZATION: Rate limiting with shorter timeout
+    // PERFORMANCE OPTIMIZATION: Quick command detection
+    const lowerMsg = msgText.toLowerCase().trim();
+    const quickCmd = QUICK_COMMANDS.get(lowerMsg);
+
+    // NOTE: karena semua non-premium diblok total, quick command TIDAK dikecualikan.
+    // Jika mau tetap membolehkan tutorial untuk non-premium, pindahkan premium-gate setelah blok ini.
+
+    // === User lookup: ambil is_premium untuk gating ===
+    const { data: userRow, error: userErr } = await supabaseAdmin
+      .from("users")
+      .select("id, name, email, phone_number, is_premium")
+      .in("phone_number", [
+        variants.e164,
+        variants.local,
+        variants.intlNoPlus,
+        variants.raw,
+      ])
+      .maybeSingle();
+
+    if (userErr) {
+      console.error("User lookup error:", userErr);
+      return NextResponse.json({
+        replies: [{ type: "text", text: "Oops, technical issue! Try again? 🙏" }],
+      });
+    }
+
+    if (!userRow?.id) {
+      // ✨ nomor tidak dikenal -> jangan balas
+      return NextResponse.json({ status: "ignored", reason: "unregistered sender" });
+    }
+
+    // === PREMIUM GATE: jika bukan premium, jangan proses & jangan balas ===
+    if (!userRow.is_premium) {
+      return NextResponse.json({ status: "ignored", reason: "non-premium user" });
+    }
+
+    // Kalau ingin tetap membolehkan tutorial utk non-premium, uncomment ini dan hapus gate di atas:
+    // if (quickCmd === "TUTORIAL") {
+    //   return NextResponse.json({ replies: [{ type: "text", text: OPTIMIZED_TUTORIAL }] });
+    // }
+
+    // PERFORMANCE OPTIMIZATION: Message deduplication dan debouncing
+    const debouncer = MessageDebouncer.getInstance();
+
+    // Cek duplicate message dulu (untuk mencegah spam message yang sama)
+    const isDuplicate = await debouncer.isDuplicateMessage(userRow.id, msgText);
+    if (isDuplicate) {
+      console.log(`Duplicate message ignored for user ${userRow.id}`);
+      return NextResponse.json({ status: "ignored", reason: "duplicate message" });
+    }
+
+    // PERFORMANCE OPTIMIZATION: Enhanced rate limiting dengan debouncing
     try {
-      const [chatLimit, senderLimit] = await Promise.all([
+      const [chatLimit, senderLimit, debounceLimit] = await Promise.all([
         ratelimit.limit(`baileys:chat:${parsed.data.chatJid}`),
         senderDigits
           ? ratelimit.limit(`baileys:sender:${senderDigits}`)
-          : { success: true },
+          : { success: true } as any,
+        // Debounce rate limit - sangat ketat untuk mencegah rapid-fire messages
+        debounceRatelimit.limit(`baileys:debounce:${userRow.id}`),
       ]);
 
+      // Jika hit debounce limit, implement debouncing
+      if (!debounceLimit.success) {
+        console.log(`Debouncing message for user ${userRow.id}`);
+
+        // Gunakan debouncing - hanya proses message terakhir
+        const shouldProcess = await debouncer.debounceMessage(
+          userRow.id,
+          parsed.data.messageId,
+          msgText,
+          4000 // 4 detik delay
+        );
+
+        if (!shouldProcess) {
+          console.log(`Message debounced/replaced for user ${userRow.id}`);
+          return NextResponse.json({ status: "debounced", reason: "message replaced by newer one" });
+        }
+
+        // Reset debounce rate limit setelah delay selesai
+        console.log(`Processing debounced message for user ${userRow.id}`);
+      }
+
+      // Regular rate limiting
       if (!chatLimit.success || !senderLimit.success) {
         const retryAfter = Math.max(
           1,
@@ -307,44 +380,7 @@ export async function POST(request: Request) {
       // Continue processing if rate limiting fails
     }
 
-    // PERFORMANCE OPTIMIZATION: Quick command detection
-    const lowerMsg = msgText.toLowerCase().trim();
-    const quickCmd = QUICK_COMMANDS.get(lowerMsg);
-
-    if (quickCmd === "TUTORIAL") {
-      return NextResponse.json({
-        replies: [{ type: "text", text: OPTIMIZED_TUTORIAL }],
-      });
-    }
-
-    // PERFORMANCE OPTIMIZATION: User lookup with specific columns
-    const { data: userRow, error: userErr } = await supabaseAdmin
-      .from("users")
-      .select("id, name, email, phone_number")
-      .in("phone_number", [
-        variants.e164,
-        variants.local,
-        variants.intlNoPlus,
-        variants.raw,
-      ])
-      .maybeSingle();
-
-    if (userErr) {
-      console.error("User lookup error:", userErr);
-      return NextResponse.json({
-        replies: [
-          { type: "text", text: "Oops, technical issue! Try again? 🙏" },
-        ],
-      });
-    }
-
-    if (!userRow?.id) {
-      // ✨ jangan balas ke siapapun jika nomor tidak dikenal
-      return NextResponse.json({ status: "ignored", reason: "unregistered sender" });
-    }
-    
-
-    // PERFORMANCE OPTIMIZATION: Handle quick view command
+    // Quick view command (hanya untuk premium setelah gate)
     if (quickCmd === "VIEW_TASKS") {
       const { data: tasks, error } = await supabaseAdmin
         .from("tasks")
@@ -547,6 +583,7 @@ export async function POST(request: Request) {
 
             if (
               deleteResult.status === "fulfilled" &&
+              // @ts-ignore - supabase typed any
               !deleteResult.value.error
             ) {
               replyText = `Done! Removed "${target.title}" ✨`;
@@ -582,6 +619,7 @@ export async function POST(request: Request) {
 
             const count =
               deleteResult.status === "fulfilled"
+                // @ts-ignore
                 ? deleteResult.value.data?.length || 0
                 : 0;
 

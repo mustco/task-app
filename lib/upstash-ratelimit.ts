@@ -10,24 +10,129 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
-// Buat instance ratelimit
-// Contoh: 5 permintaan per 10 detik per ID unik
+// Rate limiter yang lebih ketat untuk mencegah spam
+// 3 pesan per menit per user untuk menghemat Gemini API calls
 export const ratelimit = new Ratelimit({
   redis: redis,
-  limiter: Ratelimit.slidingWindow(10, "1 m"), // 5 requests per 10 seconds
-  analytics: true, // Opsional: kirim metrik ke Upstash Console
-  /**
-   * Optional: A value in milliseconds that is added to the token lifetime
-   * of theлек token and used to avoid race conditions.
-   * Default: 5000 (5 seconds)
-   */
+  limiter: Ratelimit.slidingWindow(3, "1 m"), // 3 requests per 1 minute
+  analytics: true,
   ephemeralCache: new Map(),
-  // durabilities: ["10s", "1m"], // Opsional: untuk melihat data di Upstash Console
 });
 
-// Anda bisa membuat ratelimit terpisah untuk skenario berbeda jika perlu:
-// export const strictRatelimit = new Ratelimit({
-//   redis: redis,
-//   limiter: Ratelimit.fixedWindow(2, "1 m"), // 2 requests per 1 minute
-//   ephemeralCache: new Map(),
-// });
+// Rate limiter khusus untuk debouncing - sangat ketat untuk pesan beruntun
+export const debounceRatelimit = new Ratelimit({
+  redis: redis,
+  limiter: Ratelimit.slidingWindow(1, "5 s"), // 1 request per 5 seconds
+  analytics: true,
+  ephemeralCache: new Map(),
+});
+
+// Message deduplication dan debouncing utilities
+export class MessageDebouncer {
+  private static instance: MessageDebouncer;
+  private redis: Redis;
+  private pendingMessages = new Map<string, NodeJS.Timeout>();
+
+  private constructor() {
+    this.redis = redis;
+  }
+
+  static getInstance(): MessageDebouncer {
+    if (!MessageDebouncer.instance) {
+      MessageDebouncer.instance = new MessageDebouncer();
+    }
+    return MessageDebouncer.instance;
+  }
+
+  // Debounce messages - hanya proses message terakhir dalam time window
+  async debounceMessage(
+    userId: string, 
+    messageId: string, 
+    messageText: string,
+    delay: number = 3000 // 3 detik delay
+  ): Promise<boolean> {
+    const key = `debounce:${userId}`;
+    
+    // Clear existing timeout untuk user ini
+    const existingTimeout = this.pendingMessages.get(key);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    // Simpan message terbaru di Redis dengan expiry
+    await this.redis.setex(
+      `latest_msg:${userId}`, 
+      10, // expire dalam 10 detik
+      JSON.stringify({
+        messageId,
+        messageText,
+        timestamp: Date.now()
+      })
+    );
+
+    // Set timeout untuk proses message ini
+    return new Promise((resolve) => {
+      const timeout = setTimeout(async () => {
+        // Cek apakah ini masih message terakhir
+        const latestMsg = await this.redis.get(`latest_msg:${userId}`);
+        if (latestMsg) {
+          const parsed = JSON.parse(latestMsg as string);
+          // Hanya proses jika ini adalah message terakhir
+          if (parsed.messageId === messageId) {
+            resolve(true);
+          } else {
+            resolve(false); // Message sudah digantikan yang baru
+          }
+        } else {
+          resolve(false);
+        }
+        
+        this.pendingMessages.delete(key);
+      }, delay);
+      
+      this.pendingMessages.set(key, timeout);
+    });
+  }
+
+  // Cek apakah message serupa baru saja diproses (untuk mencegah duplikasi)
+  async isDuplicateMessage(
+    userId: string, 
+    messageText: string, 
+    timeWindowMs: number = 10000
+  ): Promise<boolean> {
+    const key = `recent_msg:${userId}`;
+    const recentMsg = await this.redis.get(key);
+    
+    if (recentMsg) {
+      const parsed = JSON.parse(recentMsg as string);
+      const timeDiff = Date.now() - parsed.timestamp;
+      
+      // Jika message sama dalam time window, anggap duplikat
+      if (timeDiff < timeWindowMs && parsed.text === messageText.trim()) {
+        return true;
+      }
+    }
+
+    // Simpan message ini sebagai recent message
+    await this.redis.setex(
+      key,
+      Math.ceil(timeWindowMs / 1000),
+      JSON.stringify({
+        text: messageText.trim(),
+        timestamp: Date.now()
+      })
+    );
+
+    return false;
+  }
+
+  // Clear all pending messages untuk user tertentu
+  clearPendingMessages(userId: string): void {
+    const key = `debounce:${userId}`;
+    const timeout = this.pendingMessages.get(key);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.pendingMessages.delete(key);
+    }
+  }
+}
