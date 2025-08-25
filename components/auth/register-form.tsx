@@ -40,11 +40,11 @@ export function RegisterForm() {
     try {
       const { error } = await supabase.auth.signUp({
         email,
-        password,
-        // NOTE: Supabase email+password tidak memakai 'phone' sebagai field auth.
-        options: {
-          data: { name, phone_number: phone || null },
-        },
+  password,
+  options: {
+    emailRedirectTo: `${origin}/auth/callback`, // <— ini penting
+    data: { name, phone_number: phone || null },
+  },
       });
 
       if (error) {
