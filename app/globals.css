@@ -2,50 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import Modern Font */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    /* Light Mode: Softer, clean aesthetic */
+    --background: 240 10% 99%; /* Almost white */
+    --foreground: 240 10% 10%; /* Dark gray */
+
+    --card: 240 10% 99%;
+    --card-foreground: 240 10% 10%;
+
+    --popover: 240 10% 99%;
+    --popover-foreground: 240 10% 10%;
+
+    --primary: 260 90% 65%; /* Vibrant Purple */
+    --primary-foreground: 240 10% 99%;
+
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 5% 8%;
+
+    --muted: 240 5% 90%;
+    --muted-foreground: 240 5% 45%;
+
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 5% 8%;
+
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 5% 90%;
+    --input: 240 5% 85%;
+    --ring: 260 90% 65%;
+
+    /* Status Colors */
+    --status-pending: 38 92% 50%; /* Amber */
+    --status-progress: 199 89% 48%; /* Sky */
+    --status-completed: 142 76% 36%; /* Emerald */
+    --status-overdue: 346 84% 61%; /* Rose */
+    --status-admin: 260 90% 65%; /* Purple */
+    --status-user: 220 15% 50%; /* Grayish Blue */
+
+    /* Neon Glow Colors */
+    --glow-start: 220 100% 70%; /* Neon Blue */
+    --glow-end: 320 100% 70%; /* Neon Pink */
+
+    /* Glassmorphism */
+    --glass-bg: 240 10% 99% / 0.6;
+    --glass-border: 240 10% 90% / 0.8;
+
+    /* Radius */
+    --radius: 1rem; /* 16px */
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    /* Dark Mode: Futuristic & Neon */
+    --background: 224 71% 4%; /* Deep, dark blue */
+    --foreground: 210 40% 98%; /* Light gray, almost white */
+
+    --card: 224 71% 4%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+
+    --popover: 224 71% 4%;
     --popover-foreground: 210 40% 98%;
+
     --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
+    --primary-foreground: 224 71% 4%;
+
+    --secondary: 215 28% 17%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
+
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 215 28% 17%;
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
+
+    --destructive: 0 63% 31%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 210 40% 98%;
+
+    /* Status Colors */
+    --status-pending: 38 92% 50%;
+    --status-progress: 199 89% 48%;
+    --status-completed: 142 76% 36%;
+    --status-overdue: 346 84% 61%;
+    --status-admin: 260 90% 65%;
+    --status-user: 220 15% 50%;
+
+    /* Neon Glow Colors */
+    --glow-start: 220 100% 70%;
+    --glow-end: 320 100% 70%;
+
+    /* Glassmorphism */
+    --glass-bg: 224 71% 10% / 0.5; /* Darker, more translucent glass */
+    --glass-border: 210 40% 98% / 0.1;
+
+    /* Radius */
+    --radius: 1rem;
   }
 }
 
@@ -55,5 +113,67 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Poppins', sans-serif;
   }
 }
+
+@layer utilities {
+   .aurora {
+    background:
+      radial-gradient(60% 40% at 10% 10%, hsl(260 90% 65% / .18), transparent 55%),
+      radial-gradient(45% 35% at 90% 20%, hsl(190 95% 65% / .18), transparent 55%),
+      radial-gradient(55% 40% at 20% 85%, hsl(320 85% 65% / .18), transparent 60%),
+      radial-gradient(60% 50% at 80% 75%, hsl(120 85% 60% / .12), transparent 60%),
+      radial-gradient(120% 90% at 50% -10%, hsl(var(--background)) 0%, transparent 70%);
+    filter: saturate(115%);
+  }
+  .noise {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.035'/></svg>");
+  }
+
+  @keyframes float-aurora {
+    0%   { transform: translate3d(0,0,0) scale(1);}
+    50%  { transform: translate3d(2%, -2%, 0) scale(1.03);}
+    100% { transform: translate3d(0,0,0) scale(1);}
+  }
+  .animate-aurora { animation: float-aurora 14s ease-in-out infinite; }
+
+  
+  .glassmorphism {
+    @apply bg-[color:var(--glass-bg)] backdrop-blur-sm border border-gray-200;
+  }
+  .neon-gradient-text {
+    @apply bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500 bg-clip-text text-transparent;
+  }
+  .neon-gradient-bg {
+    @apply bg-gradient-to-r from-[hsl(var(--glow-start))] to-[hsl(var(--glow-end))];
+  }
+
+   .rays {
+    background:
+      conic-gradient(from 220deg at 30% 20%, hsl(260 90% 60% / .12), transparent 25%),
+      conic-gradient(from 40deg at 70% 80%, hsl(190 95% 55% / .10), transparent 25%),
+      radial-gradient(120% 80% at 50% -10%, hsl(var(--background)) 0%, transparent 60%);
+    mask-image: radial-gradient(120% 90% at 50% 10%, #000 60%, transparent 100%);
+  }
+    @keyframes drift {
+    0% { transform: translate3d(0,0,0) rotate(0deg); }
+    50% { transform: translate3d(1.5%, -1.5%, 0) rotate(.5deg); }
+    100% { transform: translate3d(0,0,0) rotate(0deg); }
+  }
+  /* .animate-drift { animation: drift 14s ease-in-out infinite; } */
+  .vignette { box-shadow: inset 0 0 200px 60px rgb(0 0 0 / .06); }
+
+
+  .blobs {
+    filter: blur(40px) saturate(120%);
+  }
+  @keyframes blob {
+    0%,100% { transform: translate(0,0) scale(1); }
+    33%     { transform: translate(6%, -4%) scale(1.1); }
+    66%     { transform: translate(-4%, 5%) scale(.95); }
+  }
+  .animate-blob { animation: blob 16s ease-in-out infinite; }
+}
+  

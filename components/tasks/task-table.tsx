@@ -186,6 +186,7 @@ export function TaskTable({ initialTasks, userProfile }: TaskTableProps) {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
+        timeZone: "Asia/Jakarta",
       }).format(new Date(dateString));
     } catch (e) {
       console.error("Invalid date string:", dateString, e);

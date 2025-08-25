@@ -1,3 +1,4 @@
+// components/tasks/add-task-dialog.tsx
 "use client";
 
 import type React from "react";
@@ -8,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { z } from "zod";
 
-// schema dipakai untuk client-side guard ringan (opsional)
+// ✅ Selalu-reminder schema (tanpa showReminder)
 const formSchema = z
   .object({
     title: z
@@ -38,25 +38,17 @@ const formSchema = z
       const date = new Date(val);
       return !isNaN(date.getTime()) && date > new Date();
     }, "Deadline must be a valid future date and time."),
-    showReminder: z.boolean(),
-    remindMethod: z.enum(["email", "whatsapp", "both"]).optional(),
+    remindMethod: z.enum(["email", "whatsapp", "both"], {
+      required_error: "Reminder method is required.",
+    }),
     target_email: z.string().email("Invalid email format.").optional(),
     target_phone: z.string().optional(),
     reminderDays: z
-      .number()
+      .number({ required_error: "Reminder days are required." })
       .min(0, "Cannot be negative.")
-      .max(365, "Max 365 days before.")
-      .optional(),
+      .max(365, "Max 365 days before."),
   })
   .superRefine((data, ctx) => {
-    if (!data.showReminder) return;
-    if (!data.remindMethod) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Reminder method is required.",
-        path: ["remindMethod"],
-      });
-    }
     if (data.remindMethod === "email" || data.remindMethod === "both") {
       if (!data.target_email) {
         ctx.addIssue({
@@ -74,13 +66,6 @@ const formSchema = z
           path: ["target_phone"],
         });
       }
-    }
-    if (data.reminderDays === undefined || data.reminderDays === null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Reminder days are required.",
-        path: ["reminderDays"],
-      });
     }
   });
 
@@ -102,54 +87,40 @@ export function AddTaskDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
-  const [showReminder, setShowReminder] = useState(false);
   const [remindMethod, setRemindMethod] =
     useState<Task["remind_method"]>("email");
-  const [targetContact, setTargetContact] = useState(""); // single input (email/wa)
-  const [emailContact, setEmailContact] = useState(""); // for 'both'
-  const [whatsappContact, setWhatsappContact] = useState(""); // for 'both'
-  const [reminderDays, setReminderDays] = useState(1);
+  const [emailContact, setEmailContact] = useState("");
+  const [whatsappContact, setWhatsappContact] = useState("");
+  const [reminderDays, setReminderDays] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-
   const { toast } = useToast();
 
-  // hydrate defaults based on method
+  // Prefill kontak sesuai method
   useEffect(() => {
-    if (showReminder) {
-      if (remindMethod === "email") {
-        setTargetContact(defaultEmail);
-        setEmailContact("");
-        setWhatsappContact("");
-      } else if (remindMethod === "whatsapp") {
-        setTargetContact(defaultPhone);
-        setEmailContact("");
-        setWhatsappContact("");
-      } else if (remindMethod === "both") {
-        setEmailContact(defaultEmail);
-        setWhatsappContact(defaultPhone);
-        setTargetContact("");
-      }
-    } else {
-      setRemindMethod("email");
-      setTargetContact("");
-      setEmailContact("");
+    if (!open) return;
+    if (remindMethod === "email") {
+      setEmailContact((prev) => prev || defaultEmail);
       setWhatsappContact("");
-      setReminderDays(1);
+    } else if (remindMethod === "whatsapp") {
+      setWhatsappContact((prev) => prev || defaultPhone);
+      setEmailContact("");
+    } else {
+      setEmailContact((prev) => prev || defaultEmail);
+      setWhatsappContact((prev) => prev || defaultPhone);
     }
-  }, [showReminder, remindMethod, defaultEmail, defaultPhone]);
+  }, [remindMethod, open, defaultEmail, defaultPhone]);
 
+  // Reset saat modal ditutup
   useEffect(() => {
     if (!open) {
       setTitle("");
       setDescription("");
       setDeadline("");
-      setShowReminder(false);
-      setRemindMethod("email");
-      setTargetContact("");
+      setRemindMethod("whatsapp");
       setEmailContact("");
       setWhatsappContact("");
-      setReminderDays(1);
+      setReminderDays(0);
       setErrors({});
     }
   }, [open]);
@@ -159,24 +130,48 @@ export function AddTaskDialog({
     setLoading(true);
     setErrors({});
 
+    const raw = {
+      title,
+      description,
+      deadline,
+      remindMethod: remindMethod || "whatsapp",
+      reminderDays: Number(reminderDays),
+      target_email: remindMethod !== "whatsapp" ? emailContact : undefined,
+      target_phone: remindMethod !== "email" ? whatsappContact : undefined,
+    };
+
+    // Client-side validate
+    const parsed = formSchema.safeParse(raw);
+    if (!parsed.success) {
+      const fieldErrors: Record<string, string> = {};
+      for (const [key, arr] of Object.entries(
+        parsed.error.flatten().fieldErrors
+      )) {
+        if (arr?.[0]) fieldErrors[key] = arr[0];
+      }
+      setErrors(fieldErrors);
+      setLoading(false);
+      toast({
+        title: "Validation Error",
+        description: "Please fix the fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Kirim ke server: selalu aktifkan reminder
     const formData = new FormData();
     formData.append("title", title);
     formData.append("description", description);
     formData.append("deadline", deadline);
-    formData.append("showReminder", String(showReminder));
-
-    if (showReminder) {
-      formData.append("remindMethod", remindMethod ?? "email");
-      formData.append("reminderDays", String(reminderDays));
-
-      if (remindMethod === "email") {
-        formData.append("target_email", targetContact);
-      } else if (remindMethod === "whatsapp") {
-        formData.append("target_phone", targetContact);
-      } else if (remindMethod === "both") {
-        formData.append("target_email", emailContact);
-        formData.append("target_phone", whatsappContact);
-      }
+    formData.append("showReminder", "true");
+    formData.append("remindMethod", parsed.data.remindMethod);
+    formData.append("reminderDays", String(parsed.data.reminderDays));
+    if (parsed.data.remindMethod !== "whatsapp") {
+      formData.append("target_email", parsed.data.target_email || "");
+    }
+    if (parsed.data.remindMethod !== "email") {
+      formData.append("target_phone", parsed.data.target_phone || "");
     }
 
     const result = await createTask(formData);
@@ -189,35 +184,30 @@ export function AddTaskDialog({
       return;
     }
 
-    // ---- Error handling + mapping ke field UI ----
     if (result.errors) {
       const serverErrors = result.errors as Record<string, string[]>;
       const fieldErrors: Record<string, string> = {};
-
-      // copy apa adanya dulu
       for (const key in serverErrors) {
         const msg = serverErrors[key]?.[0];
         if (msg) fieldErrors[key] = msg;
       }
-
-      // map ke field visual
-      if (fieldErrors.target_email && remindMethod === "email") {
-        fieldErrors.targetContact = fieldErrors.target_email;
+      // Map ke field yang tampil
+      if (fieldErrors.target_email) {
+        if (remindMethod === "both")
+          fieldErrors.emailContact = fieldErrors.target_email;
+        if (remindMethod === "email")
+          fieldErrors.emailContact = fieldErrors.target_email;
       }
-      if (fieldErrors.target_phone && remindMethod === "whatsapp") {
-        fieldErrors.targetContact = fieldErrors.target_phone;
+      if (fieldErrors.target_phone) {
+        if (remindMethod === "both")
+          fieldErrors.whatsappContact = fieldErrors.target_phone;
+        if (remindMethod === "whatsapp")
+          fieldErrors.whatsappContact = fieldErrors.target_phone;
       }
-      if (fieldErrors.target_email && remindMethod === "both") {
-        fieldErrors.emailContact = fieldErrors.target_email;
-      }
-      if (fieldErrors.target_phone && remindMethod === "both") {
-        fieldErrors.whatsappContact = fieldErrors.target_phone;
-      }
-
       setErrors(fieldErrors);
       toast({
         title: "Validation Error",
-        description: "Please correct the errors in the form.",
+        description: "Please correct the errors.",
         variant: "destructive",
       });
     } else {
@@ -231,210 +221,161 @@ export function AddTaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
+      {/* 🔧 Mobile friendly: lebar adaptif + tinggi max + scroll */}
+      <DialogContent className="max-w-[95vw] sm:max-w-[480px] p-0">
+        <DialogHeader className="px-6 pt-5">
           <DialogTitle>Add New Note</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-          <div>
-            <Label htmlFor="title">Title *</Label>
-            <Input
-              className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-              id="title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
-            {errors.title && (
-              <p className="text-red-500 text-sm mt-1">{errors.title}</p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-            />
-            {errors.description && (
-              <p className="text-red-500 text-sm mt-1">{errors.description}</p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="deadline">Deadline *</Label>
-            <Input
-              className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-              id="deadline"
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              required
-            />
-            {errors.deadline && (
-              <p className="text-red-500 text-sm mt-1">{errors.deadline}</p>
-            )}
-          </div>
-
-          <div className="flex items-center space-x-2 pt-2">
-            <Checkbox
-              className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-              id="set-reminder"
-              checked={showReminder}
-              onCheckedChange={(checked) => setShowReminder(Boolean(checked))}
-            />
-            <Label
-              htmlFor="set-reminder"
-              className="cursor-pointer text-sm font-medium"
-            >
-              Set Reminder
-            </Label>
-          </div>
-          {errors.showReminder && (
-            <p className="text-red-500 text-sm mt-1">{errors.showReminder}</p>
-          )}
-
-          {showReminder && (
-            <div className="space-y-4 border-t pt-4 animate-in fade-in-0 duration-300">
-              <div>
-                <Label htmlFor="remindMethod">Reminder Method *</Label>
-                <Select
-                  value={remindMethod ?? ""}
-                  onValueChange={(value) =>
-                    setRemindMethod(value as Task["remind_method"])
-                  }
-                  required={showReminder}
-                >
-                  <SelectTrigger className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400">
-                    <SelectValue placeholder="Select method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="email">Email</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    <SelectItem value="both">Both</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.remindMethod && (
-                  <p className="text-red-500 text-sm mt-1">
-                    {errors.remindMethod}
-                  </p>
-                )}
-              </div>
-
-              {remindMethod === "email" && (
-                <div>
-                  <Label htmlFor="targetContact">Email Address *</Label>
-                  <Input
-                    className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-                    id="targetContact"
-                    value={targetContact}
-                    onChange={(e) => setTargetContact(e.target.value)}
-                    type="email"
-                    required={showReminder}
-                  />
-                  {(errors.targetContact || errors.target_email) && (
-                    <p className="text-red-500 text-sm mt-1">
-                      {errors.targetContact || errors.target_email}
-                    </p>
-                  )}
-                </div>
+        {/* Body scrollable */}
+        <div className="px-6 pb-6 max-h-[75vh] overflow-y-auto">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="title">Title *</Label>
+              <Input
+                id="title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+                className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+              />
+              {errors.title && (
+                <p className="text-red-500 text-sm mt-1">{errors.title}</p>
               )}
-
-              {remindMethod === "whatsapp" && (
-                <div>
-                  <Label htmlFor="targetContact">WhatsApp Number *</Label>
-                  <Input
-                    className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-                    id="targetContact"
-                    value={targetContact}
-                    onChange={(e) => setTargetContact(e.target.value)}
-                    required={showReminder}
-                  />
-                  {(errors.targetContact || errors.target_phone) && (
-                    <p className="text-red-500 text-sm mt-1">
-                      {errors.targetContact || errors.target_phone}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {remindMethod === "both" && (
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="emailContact">Email Address *</Label>
-                    <Input
-                      className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-                      id="emailContact"
-                      value={emailContact}
-                      onChange={(e) => setEmailContact(e.target.value)}
-                      type="email"
-                      required={showReminder}
-                    />
-                    {(errors.emailContact || errors.target_email) && (
-                      <p className="text-red-500 text-sm mt-1">
-                        {errors.emailContact || errors.target_email}
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <Label htmlFor="whatsappContact">WhatsApp Number *</Label>
-                    <Input
-                      className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-                      id="whatsappContact"
-                      value={whatsappContact}
-                      onChange={(e) => setWhatsappContact(e.target.value)}
-                      required={showReminder}
-                    />
-                    {(errors.whatsappContact || errors.target_phone) && (
-                      <p className="text-red-500 text-sm mt-1">
-                        {errors.whatsappContact || errors.target_phone}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <Label htmlFor="reminderDays">Remind Days Before</Label>
-                <Input
-                  className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
-                  id="reminderDays"
-                  type="number"
-                  min="0"
-                  max="365"
-                  value={reminderDays}
-                  onChange={(e) =>
-                    setReminderDays(Number.parseInt(e.target.value))
-                  }
-                />
-                {errors.reminderDays && (
-                  <p className="text-red-500 text-sm mt-1">
-                    {errors.reminderDays}
-                  </p>
-                )}
-              </div>
             </div>
-          )}
 
-          <div className="flex justify-end space-x-2 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {loading ? "Creating..." : "Create Note"}
-            </Button>
-          </div>
-        </form>
+            <div>
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+              />
+              {errors.description && (
+                <p className="text-red-500 text-sm mt-1">
+                  {errors.description}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Label htmlFor="deadline">Deadline *</Label>
+              <Input
+                id="deadline"
+                type="datetime-local"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                required
+                className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+              />
+              {errors.deadline && (
+                <p className="text-red-500 text-sm mt-1">{errors.deadline}</p>
+              )}
+            </div>
+
+            <div>
+              <Label htmlFor="remindMethod">Reminder Method *</Label>
+              <Select
+                value={remindMethod ?? ""}
+                onValueChange={(value) =>
+                  setRemindMethod(value as Task["remind_method"])
+                }
+                required
+              >
+                <SelectTrigger className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md">
+                  <SelectValue placeholder="Select method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="email">Email</SelectItem>
+                  <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                  <SelectItem value="both">Both</SelectItem>
+                </SelectContent>
+              </Select>
+              {errors.remindMethod && (
+                <p className="text-red-500 text-sm mt-1">
+                  {errors.remindMethod}
+                </p>
+              )}
+            </div>
+
+            {/* Kontak sesuai method */}
+            {remindMethod !== "whatsapp" && (
+              <div>
+                <Label htmlFor="emailContact">Email Address *</Label>
+                <Input
+                  id="emailContact"
+                  type="email"
+                  value={emailContact}
+                  onChange={(e) => setEmailContact(e.target.value)}
+                  required
+                  className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+                />
+                {errors.emailContact && (
+                  <p className="text-red-500 text-sm mt-1">
+                    {errors.emailContact}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {remindMethod !== "email" && (
+              <div>
+                <Label htmlFor="whatsappContact">WhatsApp Number *</Label>
+                <Input
+                  id="whatsappContact"
+                  value={whatsappContact}
+                  onChange={(e) => setWhatsappContact(e.target.value)}
+                  placeholder="+62812xxxxxxx"
+                  required
+                  className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+                />
+                {errors.whatsappContact && (
+                  <p className="text-red-500 text-sm mt-1">
+                    {errors.whatsappContact}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <Label htmlFor="reminderDays">Remind Days Before *</Label>
+              <Input
+                id="reminderDays"
+                type="number"
+                min="0"
+                max="365"
+                value={reminderDays}
+                onChange={(e) =>
+                  setReminderDays(Number.parseInt(e.target.value || "0", 10))
+                }
+                required
+                className="!border !border-gray-300 !bg-white !text-black focus:!border-gray-500 focus:!ring-0 !ring-offset-0 !shadow-none !outline-none !rounded-md placeholder:text-gray-400"
+              />
+              {errors.reminderDays && (
+                <p className="text-red-500 text-sm mt-1">
+                  {errors.reminderDays}
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={loading}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {loading ? "Creating..." : "Create Note"}
+              </Button>
+            </div>
+          </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

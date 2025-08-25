@@ -1,4 +1,4 @@
-// /dashboard/page.tsx (VERSI FINAL YANG DIPERBAIKI)
+// app/dashboard/page.tsx (VERSI FINAL YANG DIPERBAIKI)
 
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";

@@ -1,3 +1,4 @@
+//app/profile/page.tsx
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout";
@@ -26,8 +27,8 @@ export default async function ProfilePage() {
     <DashboardLayout user={userProfile}>
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Profile</h1>
-          <p className="text-gray-600">Manage your account settings</p>
+          <h1 className="text-3xl font-bold text-foreground">Profile</h1>
+          <p className="text-muted-foreground">Manage your account settings</p>
         </div>
 
         <ProfileForm user={userProfile} />

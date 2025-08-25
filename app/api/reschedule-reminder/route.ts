@@ -1,11 +1,13 @@
 // app/api/reschedule-reminder/route.ts
-
 import { NextRequest, NextResponse } from "next/server";
 import { scheduleTaskReminder } from "../../../src/trigger/task";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
 import validator from "validator";
+
+// 🔑 gunakan SDK untuk cancel biar environment/key gak mismatch
+import { runs } from "@trigger.dev/sdk/v3";
 
 const RescheduleReminderSchema = z.object({
   taskId: z.string().uuid("Invalid taskId format. Must be a UUID."),
@@ -16,7 +18,7 @@ interface TaskWithUser {
   id: string;
   user_id: string;
   title: string;
-  description?: string;
+  description?: string | null;
   deadline: string;
   reminder_days: number;
   remind_method: "email" | "whatsapp" | "both" | null;
@@ -24,38 +26,27 @@ interface TaskWithUser {
   target_phone: string | null;
   trigger_handle_id?: string | null;
   users: {
-    name: string;
+    name: string | null;
     email: string;
-    phone_number?: string;
+    phone_number?: string | null;
   } | null;
 }
 
 async function cancelTriggerHandle(handleId: string): Promise<boolean> {
-  const url = `https://api.trigger.dev/api/v2/runs/${handleId}/cancel`;
+  if (!handleId) return false;
+  // Pastikan formatnya run_... sesuai Trigger.dev
+  if (!/^run_/.test(handleId)) {
+    console.warn(`Skipping cancel, invalid run handle format: ${handleId}`);
+    return false;
+  }
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      // dipercepat: dari 5000 -> 1200 ms
-      signal: AbortSignal.timeout(1200),
-    });
-    if (response.ok) {
-      console.log(`✅ Successfully cancelled trigger ${handleId} using ${url}`);
-      return true;
-    } else {
-      console.warn(
-        `❌ Failed to cancel trigger ${handleId} with ${url}: ${response.status} - ${await response.text()}`
-      );
-      return false;
-    }
-  } catch (error: any) {
-    if (error.name === "AbortError")
-      console.warn(`Cancel trigger timeout for ${handleId} (skip, continue).`);
-    else
-      console.error(`Error cancelling trigger ${handleId} with ${url}:`, error);
+    await runs.cancel(handleId);
+    console.log(`✅ Successfully cancelled run ${handleId}`);
+    return true;
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    // 404 = run sudah gak ada (sudah jalan/expired). Aman lanjut.
+    console.warn(`⚠️ runs.cancel failed for ${handleId}: ${msg}`);
     return false;
   }
 }
@@ -122,192 +113,199 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 5) Cancel run lama dulu (kalau ada)
     let cancelResult = { success: false, attempted: false };
-
-    // 5) Hapus jadwal lama (cepat)
     if (task.trigger_handle_id) {
       cancelResult.attempted = true;
-      console.log(
-        `🔄 Attempting to cancel old reminder: ${task.trigger_handle_id}`
-      );
+      console.log(`🔄 Attempting to cancel old run: ${task.trigger_handle_id}`);
       cancelResult.success = await cancelTriggerHandle(task.trigger_handle_id);
       if (cancelResult.success)
-        console.log(`✅ Old reminder cancelled successfully`);
+        console.log("✅ Old reminder cancelled successfully");
       else
         console.warn(
-          `⚠️ Could not cancel old reminder ${task.trigger_handle_id} - might already be executed or expired`
+          `⚠️ Could not cancel old reminder ${task.trigger_handle_id} (may be missing/expired)`
         );
     }
 
+    // 6) Kalau user memutuskan tidak pakai reminder lagi, selesai di sini
+    if (!hasReminder) {
+      await supabaseAdmin
+        .from("tasks")
+        .update({ trigger_handle_id: null })
+        .eq("id", taskId);
+      return NextResponse.json({
+        success: true,
+        action: "cancelled",
+        message: "Reminder cancelled successfully",
+        taskId: task.id,
+        oldTriggerHandle: task.trigger_handle_id,
+        newTriggerHandle: null,
+        cancelResult,
+        scheduleResult: { success: false, error: null },
+        scheduledFor: {
+          method: undefined,
+          email: undefined,
+          whatsapp: undefined,
+        },
+      });
+    }
+
+    // 7) Validasi method & kontak
+    if (!task.remind_method) {
+      return NextResponse.json(
+        { error: "Remind method not set for this task." },
+        { status: 400 }
+      );
+    }
+
+    const userDetails = task.users;
+    if (!userDetails) {
+      return NextResponse.json(
+        { error: "Task has no associated user details." },
+        { status: 404 }
+      );
+    }
+
+    let recipientEmail: string | undefined;
+    let recipientPhone: string | undefined;
+
+    if (task.remind_method === "email" || task.remind_method === "both") {
+      recipientEmail = task.target_email || userDetails.email;
+    }
+    if (task.remind_method === "whatsapp" || task.remind_method === "both") {
+      recipientPhone =
+        task.target_phone || userDetails.phone_number || undefined;
+    }
+
+    if (recipientEmail && !validator.isEmail(recipientEmail)) {
+      return NextResponse.json(
+        { error: "Invalid email address for reminder." },
+        { status: 400 }
+      );
+    }
+
+    if (recipientPhone) {
+      recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
+      if (recipientPhone.startsWith("0"))
+        recipientPhone = "62" + recipientPhone.slice(1);
+      else if (recipientPhone.startsWith("+62"))
+        recipientPhone = recipientPhone.slice(1);
+      else if (!recipientPhone.startsWith("62"))
+        recipientPhone = "62" + recipientPhone;
+      if (!/^62\d{8,13}$/.test(recipientPhone)) {
+        return NextResponse.json(
+          { error: "Invalid WhatsApp number format (must start with 62...)" },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (task.remind_method === "email" && !recipientEmail) {
+      return NextResponse.json(
+        { error: "No valid email address found for email reminder." },
+        { status: 400 }
+      );
+    }
+    if (task.remind_method === "whatsapp" && !recipientPhone) {
+      return NextResponse.json(
+        { error: "No valid phone number found for WhatsApp reminder." },
+        { status: 400 }
+      );
+    }
+    if (task.remind_method === "both" && (!recipientEmail || !recipientPhone)) {
+      return NextResponse.json(
+        { error: "Valid email and phone number are required for both." },
+        { status: 400 }
+      );
+    }
+
+    if (task.reminder_days < 0 || task.reminder_days > 365) {
+      return NextResponse.json(
+        { error: "Reminder days must be between 0 and 365." },
+        { status: 400 }
+      );
+    }
+
+    // 8) Hitung waktu reminder — tolak jika sudah lewat
+    const firstName = (userDetails.name || "User").split(" ")[0];
+    const deadlineDate = new Date(task.deadline);
+    const reminderTimestamp =
+      deadlineDate.getTime() - task.reminder_days * 24 * 60 * 60 * 1000;
+    if (reminderTimestamp < Date.now()) {
+      // Sudah lewat → jangan buat run baru
+      await supabaseAdmin
+        .from("tasks")
+        .update({ trigger_handle_id: null })
+        .eq("id", taskId);
+
+      return NextResponse.json(
+        {
+          error:
+            "The calculated reminder time has already passed. Cannot schedule reminder for a past date.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // 9) Buat run baru
     let newTriggerHandleId: string | null = null;
     let scheduleResult = { success: false, error: null as string | null };
     let scheduledFor = {
-      email: undefined as string | undefined,
-      whatsapp: undefined as string | undefined,
-      method: undefined as string | undefined,
+      email: recipientEmail,
+      whatsapp: recipientPhone,
+      method: task.remind_method,
     };
 
-    if (hasReminder) {
-      if (!task.remind_method) {
-        return NextResponse.json(
-          {
-            error:
-              "Remind method not set for this task. Cannot schedule a reminder.",
-          },
-          { status: 400 }
-        );
-      }
-      const userDetails = task.users;
-      if (!userDetails) {
-        return NextResponse.json(
-          { error: "Task has no associated user details." },
-          { status: 404 }
-        );
+    try {
+      const handle = await scheduleTaskReminder({
+        id: task.id,
+        title: task.title,
+        description: task.description || undefined,
+        deadline: task.deadline,
+        reminderDays: task.reminder_days,
+        recipientEmail: recipientEmail || "",
+        recipientPhone: recipientPhone,
+        firstName,
+      });
+
+      if (!handle?.id || !/^run_/.test(handle.id)) {
+        throw new Error("Unexpected run handle id from Trigger.dev");
       }
 
-      // 6) Siapkan kontak (format WhatsApp: 62xxxxxxxxxx)
-      let recipientEmail: string | undefined;
-      let recipientPhone: string | undefined;
-
-      if (task.remind_method === "email" || task.remind_method === "both") {
-        recipientEmail = task.target_email || userDetails.email;
-      }
-      if (task.remind_method === "whatsapp" || task.remind_method === "both") {
-        recipientPhone =
-          task.target_phone || userDetails.phone_number || undefined;
-      }
-
-      if (recipientEmail && !validator.isEmail(recipientEmail)) {
-        return NextResponse.json(
-          { error: "Invalid email address for reminder." },
-          { status: 400 }
-        );
-      }
-
-      if (recipientPhone) {
-        recipientPhone = recipientPhone.trim().replace(/[\s-]/g, "");
-        if (recipientPhone.startsWith("0")) {
-          // 08xxx -> 62xxx
-          recipientPhone = "62" + recipientPhone.slice(1);
-        } else if (recipientPhone.startsWith("+62")) {
-          // +62xxx -> 62xxx
-          recipientPhone = recipientPhone.slice(1);
-        } else if (!recipientPhone.startsWith("62")) {
-          // misal 812xxx -> 62812xxx
-          recipientPhone = "62" + recipientPhone;
-        }
-        // validasi: 62 + 8..13 digit berikutnya
-        if (!/^62\d{8,13}$/.test(recipientPhone)) {
-          return NextResponse.json(
-            { error: "Invalid WhatsApp number format (must start with 62...)" },
-            { status: 400 }
-          );
-        }
-      }
-
-      // Ketersediaan kontak
-      if (task.remind_method === "email" && !recipientEmail) {
-        return NextResponse.json(
-          { error: "No valid email address found for email reminder." },
-          { status: 400 }
-        );
-      }
-      if (task.remind_method === "whatsapp" && !recipientPhone) {
-        return NextResponse.json(
-          { error: "No valid phone number found for WhatsApp reminder." },
-          { status: 400 }
-        );
-      }
-      if (
-        task.remind_method === "both" &&
-        (!recipientEmail || !recipientPhone)
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Valid email and phone number are required for both reminder methods.",
-          },
-          { status: 400 }
-        );
-      }
-
-      // Validasi reminder_days
-      if (task.reminder_days < 0 || task.reminder_days > 365) {
-        return NextResponse.json(
-          { error: "Reminder days must be between 0 and 365." },
-          { status: 400 }
-        );
-      }
-
-      const firstName = (userDetails.name || "User").split(" ")[0];
-      const deadlineDate = new Date(task.deadline);
-      const reminderTimestamp =
-        deadlineDate.getTime() - task.reminder_days * 24 * 60 * 60 * 1000;
-
-      // Izinkan "tepat sekarang", tolak kalau sudah lewat
-      if (reminderTimestamp < Date.now()) {
-        return NextResponse.json(
-          {
-            error:
-              "The calculated reminder time has already passed. Cannot schedule reminder for a past date.",
-          },
-          { status: 400 }
-        );
-      }
-
-      try {
-        const handle = await scheduleTaskReminder({
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          deadline: task.deadline,
-          reminderDays: task.reminder_days,
-          recipientEmail: recipientEmail || "",
-          recipientPhone: recipientPhone,
-          firstName: firstName,
-        });
-        newTriggerHandleId = handle.id;
-        scheduleResult.success = true;
-        scheduledFor = {
-          email: recipientEmail,
-          whatsapp: recipientPhone,
-          method: task.remind_method,
-        };
-        console.log(`✅ New reminder scheduled: ${newTriggerHandleId}`);
-      } catch (error: any) {
-        scheduleResult.error = error.message;
-        console.error("Error scheduling new reminder:", error);
-        return NextResponse.json(
-          { error: "Failed to schedule new reminder", details: error.message },
-          { status: 500 }
-        );
-      }
-    } else {
-      console.log("hasReminder is false. No new reminder will be scheduled.");
+      newTriggerHandleId = handle.id;
+      scheduleResult.success = true;
+      console.log(`✅ New reminder scheduled: ${newTriggerHandleId}`);
+    } catch (error: any) {
+      scheduleResult.error = error?.message || "Unknown schedule error";
+      console.error("Error scheduling new reminder:", error);
+      return NextResponse.json(
+        {
+          error: "Failed to schedule new reminder",
+          details: scheduleResult.error,
+        },
+        { status: 500 }
+      );
     }
 
-    // 7) Update trigger_handle_id
+    // 10) Simpan handle baru
     const { error: updateError } = await supabaseAdmin
       .from("tasks")
       .update({ trigger_handle_id: newTriggerHandleId })
       .eq("id", taskId);
-
     if (updateError) {
       console.error("Failed to update trigger_handle_id in DB:", updateError);
     }
 
     return NextResponse.json({
       success: true,
-      message: hasReminder
-        ? "Reminder rescheduled successfully"
-        : "Reminder cancelled successfully",
+      message: "Reminder rescheduled successfully",
+      action: "rescheduled",
       taskId: task.id,
       oldTriggerHandle: task.trigger_handle_id,
       newTriggerHandle: newTriggerHandleId,
-      cancelResult: cancelResult,
-      scheduleResult: scheduleResult,
-      action: hasReminder ? "rescheduled" : "cancelled",
-      scheduledFor: scheduledFor,
+      cancelResult,
+      scheduleResult,
+      scheduledFor,
     });
   } catch (error: any) {
     console.error("Error in reschedule-reminder API:", error);
