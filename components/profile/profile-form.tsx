@@ -42,7 +42,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
           name,
           email,
           phone_number: phoneNumber,
-          is_premium: isPremium,
+          // is_premium: isPremium,
         })
         .eq("id", user?.id);
 
@@ -147,7 +147,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
             </div>
 
             {/* Premium */}
-            <div>
+            {/* <div>
               <Label htmlFor="premium">Premium</Label>
               <Select
                 value={isPremium ? "true" : "false"}
@@ -161,7 +161,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
                   <SelectItem value="true">True</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
+            </div> */}
 
             <Button type="submit" disabled={loading}>
               {loading ? "Memperbarui..." : "Perbarui Profil"}
