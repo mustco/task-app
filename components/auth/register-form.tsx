@@ -24,6 +24,11 @@ export function RegisterForm() {
   const router = useRouter();
   const supabase = createClient();
 
+  const baseUrl =
+  typeof window !== "undefined"
+    ? window.location.origin
+    : process.env.NEXT_PUBLIC_SITE_URL ?? "https://listku.my.id";
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -54,7 +59,7 @@ export function RegisterForm() {
         email,
         password,
         options: {
-          emailRedirectTo: `${origin}/auth/callback?type=signup`,
+          emailRedirectTo: `${baseUrl}/auth/callback?type=signup`,
           data: { name, phone_number: phone || null },
         },
       });
